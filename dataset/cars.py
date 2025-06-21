@@ -1,213 +1,75 @@
-import os
 import torch
-import pathlib
-from typing import Callable, Optional, Any, Tuple
+from datasets import load_dataset_builder, load_dataset
+from torch.utils.data import Dataset, DataLoader
 
-from PIL import Image
+class HFCarsDataset(Dataset):
+    def __init__(self, hf_split, transforms=None):
+        self.hf_split = hf_split
+        self.transforms = transforms
 
-from torchvision.datasets.utils import download_and_extract_archive, download_url, verify_str_arg
-from torchvision.datasets.vision import VisionDataset
+    def __len__(self):
+        return len(self.hf_split)
 
+    def __getitem__(self, idx):
+        item = self.hf_split[idx]
+        image = item['image'].convert("RGB") 
+        label = item['label']
 
-ROOT = "" # Set the root directory to the dataset here
+        if self.transforms:
+            image = self.transforms(image)
 
-class PytorchStanfordCars(VisionDataset):
-    """`Stanford Cars <https://ai.stanford.edu/~jkrause/cars/car_dataset.html>`_ Dataset
-
-    The Cars dataset contains 16,185 images of 196 classes of cars. The data is
-    split into 8,144 training images and 8,041 testing images, where each class
-    has been split roughly in a 50-50 split
-
-    .. note::
-
-        This class needs `scipy <https://docs.scipy.org/doc/>`_ to load target files from `.mat` format.
-
-    Args:
-        root (string): Root directory of dataset
-        split (string, optional): The dataset split, supports ``"train"`` (default) or ``"test"``.
-        transform (callable, optional): A function/transform that  takes in an PIL image
-            and returns a transformed version. E.g, ``transforms.RandomCrop``
-        target_transform (callable, optional): A function/transform that takes in the
-            target and transforms it.
-        download (bool, optional): If True, downloads the dataset from the internet and
-            puts it in root directory. If dataset is already downloaded, it is not
-            downloaded again."""
-
-    def __init__(
-        self,
-        root: str = ROOT,
-        split: str = "train",
-        transform: Optional[Callable] = None,
-        target_transform: Optional[Callable] = None,
-        download: bool = False,
-    ) -> None:
-
-        try:
-            import scipy.io as sio
-        except ImportError:
-            raise RuntimeError("Scipy is not found. This dataset needs to have scipy installed: pip install scipy")
-
-        super().__init__(root, transform=transform, target_transform=target_transform)
-
-        self._split = verify_str_arg(split, "split", ("cars_train", "cars_test"))
-        self._base_folder = pathlib.Path(root)
-        devkit = self._base_folder / "devkit"
-
-        if self._split == "train":
-            self._annotations_mat_path = devkit / "cars_train_annos.mat"
-            self._images_base_path = self._base_folder / "cars_train"
-        else:
-            self._annotations_mat_path = self._base_folder / "cars_test_annos_withlabels.mat"
-            self._images_base_path = self._base_folder / "cars_test"
-
-        if download:
-            self.download()
-            
-        if not self._check_exists():
-            raise RuntimeError("Dataset not found. You can use download=True to download it")
-
-        self._samples = [
-            (
-                str(self._images_base_path / annotation["fname"]),
-                annotation["class"] - 1,  # Original target mapping  starts from 1, hence -1
-            )
-            for annotation in sio.loadmat(self._annotations_mat_path, squeeze_me=True)["annotations"]
-        ]
-
-        self.classes = sio.loadmat(str(devkit / "cars_meta.mat"), squeeze_me=True)["class_names"].tolist()
-        self.class_to_idx = {cls: i for i, cls in enumerate(self.classes)}
-
-    def __len__(self) -> int:
-        return len(self._samples)
-
-    def __getitem__(self, idx: int) -> Tuple[Any, Any]:
-        """Returns pil_image and class_id for given index"""
-        image_path, target = self._samples[idx]
-        pil_image = Image.open(image_path).convert("RGB")
-
-        if self.transform is not None:
-            pil_image = self.transform(pil_image)
-        if self.target_transform is not None:
-            target = self.target_transform(target)
-        return pil_image, target
-
-
-    def download(self) -> None:
-        if self._check_exists():
-            return
-
-        download_and_extract_archive(
-            url="https://ai.stanford.edu/~jkrause/cars/car_devkit.tgz",
-            download_root=str(self._base_folder),
-            md5="c3b158d763b6e2245038c8ad08e45376",
-        )
-        if self._split == "train":
-            download_and_extract_archive(
-                url="https://ai.stanford.edu/~jkrause/car196/cars_train.tgz",
-                download_root=str(self._base_folder),
-                md5="065e5b463ae28d29e77c1b4b166cfe61",
-            )
-        else:
-            download_and_extract_archive(
-                url="https://ai.stanford.edu/~jkrause/car196/cars_test.tgz",
-                download_root=str(self._base_folder),
-                md5="4ce7ebf6a94d07f1952d94dd34c4d501",
-            )
-            download_url(
-                url="https://ai.stanford.edu/~jkrause/car196/cars_test_annos_withlabels.mat",
-                root=str(self._base_folder),
-                md5="b0a2b23655a3edd16d84508592a98d10",
-            )
-
-    def _check_exists(self) -> bool:
-        if not (self._base_folder / "devkit").is_dir():
-            return False
-
-        return self._annotations_mat_path.exists() and self._images_base_path.is_dir()
-
-
-class Cars:
-    def __init__(self,
-                 is_train,
-                 preprocess,
-                 location=os.path.expanduser('~/data'),
-                 batch_size=32,
-                 num_workers=16):
-        # Data loading code
-        if is_train:
-            self.train_dataset = PytorchStanfordCars(location, 'cars_train', preprocess, download=False)
-            self.train_loader = torch.utils.data.DataLoader(
-                self.train_dataset,
-                shuffle=True,
-                batch_size=batch_size,
-                num_workers=num_workers,
-            )
-            dataset = self.train_dataset
-        else:
-            self.test_dataset = PytorchStanfordCars(location, 'cars_test', preprocess, download=False)
-            self.test_loader = torch.utils.data.DataLoader(
-                self.test_dataset,
-                batch_size=batch_size,
-                num_workers=num_workers
-            )
-            dataset = self.test_dataset
-        
-        
-        idx_to_class = dict((v, k)
-                            for k, v in dataset.class_to_idx.items())
-        self.classnames = [idx_to_class[i].replace(
-            '_', ' ') for i in range(len(idx_to_class))]
-
+        return image, label
 
 def prepare_train_loaders(config):
+    hf_train_split = load_dataset("tanganke/stanford_cars", split="train", cache_dir=config.get('hf_cache_dir'))
     
-    dataset_class = Cars(
-        is_train=True,
-        preprocess=config['train_preprocess'],
-        location=ROOT,
-        batch_size=config['batch_size'],
-        num_workers=config['num_workers'],
+    train_dataset = HFCarsDataset(
+        hf_split=hf_train_split,
+        transforms=config['train_preprocess']
     )
+
     loaders = {
-        'full': dataset_class.train_loader
+        'full': DataLoader(
+            train_dataset,
+            batch_size=config['batch_size'],
+            shuffle=True,
+            num_workers=config['num_workers']
+        )
     }
     return loaders
 
 def prepare_test_loaders(config):
-    dataset_class = Cars(
-        is_train=False,
-        preprocess=config['eval_preprocess'],
-        location=ROOT,
-        batch_size=config['batch_size'],
-        num_workers=config['num_workers'],
+    hf_full_test_split = load_dataset("tanganke/stanford_cars", split="test", cache_dir=config.get('hf_cache_dir'))
+    
+    split_dict = hf_full_test_split.train_test_split(test_size=0.8, seed=42)
+    hf_val_split = split_dict['train'] 
+    hf_test_split = split_dict['test'] 
+
+    val_dataset = HFCarsDataset(
+        hf_split=hf_val_split,
+        transforms=config['eval_preprocess']
     )
-    
+    test_dataset = HFCarsDataset(
+        hf_split=hf_test_split,
+        transforms=config['eval_preprocess']
+    )
+
     loaders = {
-        'test': dataset_class.test_loader
+        'val': DataLoader(
+            val_dataset,
+            batch_size=config['batch_size'],
+            shuffle=False,
+            num_workers=config['num_workers']
+        ),
+        'test': DataLoader(
+            test_dataset,
+            batch_size=config['batch_size'],
+            shuffle=False,
+            num_workers=config['num_workers']
+        ),
     }
-    
-    if config.get('val_fraction', 0) > 0.:
-        print('splitting cars')
-        test_set = loaders['test'].dataset
-        shuffled_idxs = torch.load(config['shuffled_idxs'])
-        num_valid = int(len(test_set) * config['val_fraction'])
-        valid_idxs, test_idxs = shuffled_idxs[:num_valid], shuffled_idxs[num_valid:]
-        
-        val_set =  torch.utils.data.Subset(test_set, valid_idxs)
-        test_set =  torch.utils.data.Subset(test_set, test_idxs)
-        
-        loaders['test'] = torch.utils.data.DataLoader(
-            test_set,
-            batch_size=config['batch_size'], 
-            shuffle=False, 
-            num_workers=config['num_workers']
-        )
-        loaders['val'] = torch.utils.data.DataLoader(
-            val_set, 
-            batch_size=config['batch_size'], 
-            shuffle=False, 
-            num_workers=config['num_workers']
-        )
-    loaders['class_names'] = dataset_class.classnames
+
+    builder = load_dataset_builder("tanganke/stanford_cars")
+    loaders['class_names'] = builder.info.features['label'].names
     
     return loaders

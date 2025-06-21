@@ -237,7 +237,7 @@ def evaluate_cliphead(
                 outputs = torch.einsum('ij,ijk->ik', normed_encodings, task_features)
                 remap_class_idxs = task_info['remap_class_idxs']
             else:
-                outputs = normed_encodings @ class_vectors.T
+                outputs = normed_encodings @ class_vectors.to(device).T
             pred = outputs.argmax(dim=1)
             if remap_class_idxs is not None:
                 remapped_labels = remap_class_idxs[labels]
@@ -360,99 +360,35 @@ def train_cliphead_lora(model, train_loader, test_loader, class_vectors, remap_c
     acc = evaluate_cliphead(model, test_loader, class_vectors=eval_class_vectors, remap_class_idxs=remap_class_idxs)
     return model, acc
 
-
-##########################################################################################################################
-############################################### EXPERIMENT CONFIG CREATION ###############################################
-##########################################################################################################################
-
 def prepare_data(config, device='cuda'):
     """ Load all dataloaders required for experiment. """
     if isinstance(config, list):
         return [prepare_data(c, device) for c in config]
-    
-    dataset_name = config['name']
-    
-    import dataset.configs as config_module
-    data_config = deepcopy(getattr(config_module, dataset_name))
-    data_config.update(config)
+
+    data_config = deepcopy(config)
     data_config['device'] = device
-    
-    #NLI datasets
-    if data_config['type'] == 'snli':
-        from dataset.snli import prepare_train_loaders, prepare_test_loaders
-        train_loaders = prepare_train_loaders(data_config)
-        test_loaders = prepare_test_loaders(data_config)
-    
-    elif data_config['type'] == 'mnli':
-        from dataset.mnli import prepare_train_loaders, prepare_test_loaders
-        train_loaders = prepare_train_loaders(data_config)
-        test_loaders = prepare_test_loaders(data_config)
-    
-    elif data_config['type'] == 'sick':
-        from dataset.sick import prepare_train_loaders, prepare_test_loaders
-        train_loaders = prepare_train_loaders(data_config)
-        test_loaders = prepare_test_loaders(data_config)
-    
-    elif data_config['type'] == 'qnli':
-        from dataset.qnli import prepare_train_loaders, prepare_test_loaders
-        train_loaders = prepare_train_loaders(data_config)
-        test_loaders = prepare_test_loaders(data_config)
-    
-    elif data_config['type'] == 'rte':
-        from dataset.rte import prepare_train_loaders, prepare_test_loaders
-        train_loaders = prepare_train_loaders(data_config)
-        test_loaders = prepare_test_loaders(data_config)
+    dataset_type = data_config.get('type', data_config['name'])
 
-    elif data_config['type'] == 'scitail':
-        from dataset.scitail import prepare_train_loaders, prepare_test_loaders
-        train_loaders = prepare_train_loaders(data_config)
-        test_loaders = prepare_test_loaders(data_config)
+    project_root = os.path.dirname(os.path.abspath(__file__))
+    data_root = os.path.join(project_root, 'data')
+    data_config['location'] = data_root
 
-    #-------------------------------------------------
-    
-    elif data_config['type'] == 'eurosat':
-        from dataset.eurosat import prepare_train_loaders, prepare_test_loaders
-        train_loaders = prepare_train_loaders(data_config)
-        test_loaders = prepare_test_loaders(data_config)
-    elif data_config['type'] == 'stanford_cars':
-        from dataset.cars import prepare_train_loaders, prepare_test_loaders
-        train_loaders = prepare_train_loaders(data_config)
-        test_loaders = prepare_test_loaders(data_config)
-    elif data_config['type'] == 'dtd':
-        from dataset.dtd import prepare_train_loaders, prepare_test_loaders
-        train_loaders = prepare_train_loaders(data_config)
-        test_loaders = prepare_test_loaders(data_config)
-    elif data_config['type'] == 'mnist':
-        from dataset.mnist import prepare_train_loaders, prepare_test_loaders
-        train_loaders = prepare_train_loaders(data_config)
-        test_loaders = prepare_test_loaders(data_config)
-    elif data_config['type'] == 'gtsrb':
-        from dataset.gtsrb import prepare_train_loaders, prepare_test_loaders
-        train_loaders = prepare_train_loaders(data_config)
-        test_loaders = prepare_test_loaders(data_config)
-    elif data_config['type'] == 'svhn':
-        from dataset.svhn import prepare_train_loaders, prepare_test_loaders
-        train_loaders = prepare_train_loaders(data_config)
-        test_loaders = prepare_test_loaders(data_config)
-    elif data_config['type'] == 'sun397':
-        from dataset.sun397 import prepare_train_loaders, prepare_test_loaders
-        train_loaders = prepare_train_loaders(data_config)
-        test_loaders = prepare_test_loaders(data_config)
-    elif data_config['type'] == 'resisc45':
-        from dataset.resisc45 import prepare_train_loaders, prepare_test_loaders
-        train_loaders = prepare_train_loaders(data_config)
-        test_loaders = prepare_test_loaders(data_config)
-    else:
-        raise NotImplementedError(config['type'])
-    
     try:
-        return {
-            'train': train_loaders,
-            'test': test_loaders
-        }
-    except:
-        pdb.set_trace()
+        loader_module = __import__(f"dataset.{dataset_type}", fromlist=['prepare_train_loaders', 'prepare_test_loaders'])
+        train_loaders = loader_module.prepare_train_loaders(data_config)
+        test_loaders = loader_module.prepare_test_loaders(data_config)
+    except ImportError:
+        raise NotImplementedError(f"Could not find or import from dataset/{dataset_type}.py")
+    except AttributeError:
 
+        loader_module = __import__(f"dataset.{dataset_type}", fromlist=[f"prepare_{dataset_type}_data"])
+        prepare_fn = getattr(loader_module, f"prepare_{dataset_type}_data")
+        train_loaders, test_loaders = prepare_fn(data_config)
+
+    return {
+        'train': train_loaders,
+        'test': test_loaders
+    }
         
 def replace_sd_keys(sd, original, new):
     new_sd = {}
@@ -521,6 +457,7 @@ def prepare_hf_clip(config, device):
     for idx, base_path in tqdm(enumerate(config['bases']), desc="Preparing Models", position=0, leave=True):
         base_model = get_model_from_config(config, device)
         if base_path.endswith('.pt'):
+            # sd = torch.load(base_path, map_location=torch.device(device))
             sd = torch.load(base_path, map_location=torch.device(device))
             sd = replace_sd_keys(sd, 'lora_model', 'vision_model')
             sd = replace_sd_keys(sd, 'linear_layer.', 'vision_head.')
@@ -711,45 +648,50 @@ def write_to_csv(results, csv_file):
 
 
 def get_device(model):
-    """Get the device of the model."""
     return next(iter(model.parameters())).device
 
+def load_clip_features(class_names, device, model_name="openai/clip-vit-base-patch32"):
+    from transformers import CLIPProcessor, CLIPModel
 
-def load_clip_features(class_names, device):
-    """Create CLIP target labels for class names. Return a normalized tensor of shape (num_classes, 512)."""
-    text_inputs = torch.cat([clip.tokenize(f"a photo of a {c}") for c in class_names]).to(device)
-    model, preprocess = clip.load('ViT-B/32', device)
+    print(f"Generating text encodings using model: {model_name}")
+    
+    model = CLIPModel.from_pretrained(model_name).to(device)
+    processor = CLIPProcessor.from_pretrained(model_name)
+
+    text_prompts = [f"a photo of a {c}" for c in class_names]
+    text_inputs = processor(
+        text=text_prompts,
+        return_tensors="pt",
+        padding=True
+    ).to(device)
+
     with torch.no_grad():
-        text_features = model.encode_text(text_inputs)
+        text_features = model.get_text_features(**text_inputs)
 
     text_features /= text_features.norm(dim=-1, keepdim=True)
+    
     return text_features
 
-
-def create_heldout_split(dataset, fraction): # root=dataset.root_og for most datasets
-    root = dataset.root
-    if hasattr(dataset, 'dataset'):
-        val_set, test_set = train_test_split(dataset.dataset, test_size=fraction)
-    else:
-        val_set, test_set = train_test_split(dataset, test_size=fraction)
-    val_set = dataset.__class__(root, train=dataset.train, transform=dataset.transform, base_set=val_set)
-    test_set = dataset.__class__(root, train=dataset.train, transform=dataset.transform, base_set=test_set)
-    return val_set, test_set
+def create_heldout_split(dataset, fraction):
+    total_size = len(dataset)
+    val_size = int(total_size * fraction)
+    test_size = total_size - val_size
+    generator = torch.Generator().manual_seed(420)
+    val_subset, test_subset = torch.utils.data.random_split(dataset, [val_size, test_size], generator=generator)
+    return val_subset, test_subset
     
 
 def save_model(model, save_path):
     torch.save(model.state_dict(), save_path)
 
 
-def load_model(model, save_path, model_device='cuda'):
-    sd = torch.load(save_path, map_location=torch.device(model_device))
+def load_model(model, save_path, device='cpu'):
+    sd = torch.load(save_path, map_location=torch.device(device))
     model.load_state_dict(sd)
     return model
 
 
 def mean_confidence_interval(data, confidence=0.95):
-    """Get confidence interval of data"""
-    # copied from: https://stackoverflow.com/questions/15033511/compute-a-confidence-interval-from-sample-data
     a = 1.0 * np.array(data)
     n = len(a)
     m, se = np.mean(a), scipy.stats.sem(a)
@@ -757,20 +699,19 @@ def mean_confidence_interval(data, confidence=0.95):
     return tuple(np.array([m, h]).round(5).tolist())
 
 
-def get_clip_encodings(path):
-    return torch.load(path)
+def get_clip_encodings(path, device='cpu'):
+    return torch.load(path, map_location=torch.device(device))
 
 
 def vector_to_state_dict(vector, state_dict, remove_keys=[]):
-    # create a reference dict to define the order of the vector
     reference_dict = deepcopy(state_dict)
     for key in remove_keys:
         if key in reference_dict:
             del reference_dict[key]
     sorted_reference_dict = OrderedDict(sorted(reference_dict.items()))
-    # create a shared state dict using the refence dict
+
     torch.nn.utils.vector_to_parameters(vector, sorted_reference_dict.values())
-    # add back the encoder and decoder embedding weights.
+
     if "transformer.shared.weight" in sorted_reference_dict:
         for key in remove_keys:
             sorted_reference_dict[key] = sorted_reference_dict[

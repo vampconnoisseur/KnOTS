@@ -1,16 +1,14 @@
 from .eurosat import EuroSATBase
-from .cars import Cars
+# from .cars import Cars
 from .dtd import DTD
 from .mnist import MNIST
 from .gtsrb import GTSRB
-from .svhn import SVHN
+# from .svhn import SVHN
 from .sun397 import SUN397
 from .resisc45 import RESISC45
 # from .qnli import QNLI
 # from .rte import RTE
 # from .scitail import SCITAIL
-
-
 
 
 eurosat = {

@@ -1,9 +1,10 @@
 import os
 import torch
 import torchvision.datasets as datasets
+from utils import create_heldout_split
 
 
-ROOT = "" # Path to the root directory of the dataset
+ROOT = "" 
 
 class MNIST:
     def __init__(self,
@@ -62,7 +63,7 @@ def prepare_test_loaders(config):
     dataset_class = MNIST(
         is_train=False,
         preprocess=config['eval_preprocess'],
-        location=ROOT,
+        location=config.get('location', ROOT),
         batch_size=config['batch_size'],
         num_workers=config['num_workers'],
     )
@@ -70,28 +71,23 @@ def prepare_test_loaders(config):
     loaders = {
         'test': dataset_class.test_loader
     }
-    if config.get('val_fraction', 0) > 0.:
-        print('splitting mnist')
-        test_set = loaders['test'].dataset
-        shuffled_idxs = torch.load(config['shuffled_idxs'])
-        num_valid = int(len(test_set) * config['val_fraction'])
-        valid_idxs, test_idxs = shuffled_idxs[:num_valid], shuffled_idxs[num_valid:]
-        val_set =  torch.utils.data.Subset(test_set, valid_idxs)
-        test_set =  torch.utils.data.Subset(test_set, test_idxs)
-        loaders['test'] = torch.utils.data.DataLoader(
-            test_set,
-            batch_size=config['batch_size'], 
-            shuffle=False, 
-            num_workers=config['num_workers']
-        )
-        loaders['val'] = torch.utils.data.DataLoader(
-            val_set, 
-            batch_size=config['batch_size'], 
-            shuffle=False, 
-            num_workers=config['num_workers']
-        )
-    loaders['class_names'] = dataset_class.classnames
     
+    if config.get('val_fraction', 0) > 0.:
+        print('splitting mnist for validation')
+        val_subset, test_subset = create_heldout_split(loaders['test'].dataset, fraction=config['val_fraction'])
+        
+        loaders['val'] = torch.utils.data.DataLoader(
+            val_subset,
+            batch_size=config['batch_size'], 
+            shuffle=False, 
+            num_workers=config['num_workers']
+        )
+        loaders['test'] = torch.utils.data.DataLoader(
+            test_subset,
+            batch_size=config['batch_size'], 
+            shuffle=False, 
+            num_workers=config['num_workers']
+        )
+        
+    loaders['class_names'] = dataset_class.classnames
     return loaders
-
-

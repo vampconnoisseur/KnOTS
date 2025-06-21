@@ -1,102 +1,52 @@
-import os
-import torch
-from torchvision.datasets import SVHN as PyTorchSVHN
+import os, torch, numpy as np
+from PIL import Image
+from torchvision import datasets
+from torchvision.datasets.utils import download_url
+from tqdm.auto import tqdm
+from utils import create_heldout_split
 
+def _convert_svhn_mat_to_imagefolder(root_dir):
+    image_dir = os.path.join(root_dir, 'images')
+    if os.path.exists(os.path.join(image_dir, 'train')):
+        print("SVHN images directory already exists. Skipping pre-processing.")
+        return image_dir
+    print("Performing one-time pre-processing of SVHN .mat files...")
+    os.makedirs(image_dir, exist_ok=True)
+    import scipy.io as sio
+    for split in ['train', 'test']:
+        mat_path = os.path.join(root_dir, f"{split}_32x32.mat")
+        if not os.path.exists(mat_path):
+            url = f"http://ufldl.stanford.edu/housenumbers/{split}_32x32.mat"
+            download_url(url, root=root_dir, filename=os.path.basename(mat_path))
+        loaded_mat = sio.loadmat(mat_path)
+        data, labels = loaded_mat['X'], loaded_mat['y'].astype(np.int64).squeeze()
+        np.place(labels, labels == 10, 0)
+        split_path = os.path.join(image_dir, split)
+        os.makedirs(split_path, exist_ok=True)
+        print(f"Converting {split} split to image files...")
+        for i in tqdm(range(data.shape[3])):
+            img = Image.fromarray(np.transpose(data[:, :, :, i], (1, 0, 2)))
+            label_dir = os.path.join(split_path, str(labels[i]))
+            os.makedirs(label_dir, exist_ok=True)
+            img.save(os.path.join(label_dir, f"{i}.png"))
+    print("SVHN pre-processing complete.")
+    return image_dir
 
-ROOT = "" # Path to the root directory of the dataset
-
-class SVHN:
-    def __init__(self,
-                 is_train,
-                 preprocess,
-                 location=ROOT,
-                 batch_size=128,
-                 num_workers=16):
-
-        # to fit with repo conventions for location
-        modified_location = os.path.join(location, 'svhn')
-
-        if is_train:
-            self.train_dataset = PyTorchSVHN(
-                root=modified_location,
-                download=True,
-                split='train',
-                transform=preprocess
-            )
-
-            self.train_loader = torch.utils.data.DataLoader(
-                self.train_dataset,
-                batch_size=batch_size,
-                shuffle=True,
-                num_workers=num_workers
-            )
-
-        else:
-            self.test_dataset = PyTorchSVHN(
-                root=modified_location,
-                download=True,
-                split='test',
-                transform=preprocess
-            )
-
-            self.test_loader = torch.utils.data.DataLoader(
-                self.test_dataset,
-                batch_size=batch_size,
-                shuffle=False,
-                num_workers=num_workers
-            )
-
-        self.classnames = ['0', '1', '2', '3', '4', '5', '6', '7', '8', '9']
-    
 def prepare_train_loaders(config):
-    dataset_class = SVHN(
-        is_train=True,
-        preprocess=config['train_preprocess'],
-        location=ROOT,
-        batch_size=config['batch_size'],
-        num_workers=config['num_workers'],
-    )
-    loaders = {
-        'full': dataset_class.train_loader
-    }
-    return loaders
+    svhn_root = os.path.join(config['location'], 'svhn_data')
+    image_folder_root = _convert_svhn_mat_to_imagefolder(svhn_root)
+    train_dataset = datasets.ImageFolder(os.path.join(image_folder_root, 'train'), transform=config['train_preprocess'])
+    return {'full': torch.utils.data.DataLoader(train_dataset, batch_size=config['batch_size'], shuffle=True, num_workers=config['num_workers'], pin_memory=True)}
 
 def prepare_test_loaders(config):
-    dataset_class = SVHN(
-        is_train=False,
-        preprocess=config['eval_preprocess'],
-        location=ROOT,
-        batch_size=config['batch_size'],
-        num_workers=config['num_workers'],
-    )
-    
-    loaders = {
-        'test': dataset_class.test_loader
-    }
-    if config.get('val_fraction', 0) > 0.:
-        print('splitting svhn')
-        test_set = loaders['test'].dataset
-        # test_set, val_set = create_heldout_split(test_set, config['val_fraction'])
-        # shuffled_idxs = np.random.permutation(np.arange(len(test_set)))
-        shuffled_idxs = torch.load(config['shuffled_idxs'])
-        num_valid = int(len(test_set) * config['val_fraction'])
-        valid_idxs, test_idxs = shuffled_idxs[:num_valid], shuffled_idxs[num_valid:]
-        
-        # test_set, val_set = create_heldout_split(test_set, config['val_fraction'])
-        val_set =  torch.utils.data.Subset(test_set, valid_idxs)
-        test_set =  torch.utils.data.Subset(test_set, test_idxs)
-        loaders['test'] = torch.utils.data.DataLoader(
-            test_set,
-            batch_size=config['batch_size'], 
-            shuffle=False, 
-            num_workers=config['num_workers']
-        )
-        loaders['val'] = torch.utils.data.DataLoader(
-            val_set, 
-            batch_size=config['batch_size'], 
-            shuffle=False, 
-            num_workers=config['num_workers']
-        )
-    loaders['class_names'] = dataset_class.classnames
-    
+    svhn_root = os.path.join(config['location'], 'svhn_data')
+    image_folder_root = _convert_svhn_mat_to_imagefolder(svhn_root)
+    test_dataset = datasets.ImageFolder(os.path.join(image_folder_root, 'test'), transform=config['eval_preprocess'])
+    loaders = {'test': torch.utils.data.DataLoader(test_dataset, batch_size=config['batch_size'], shuffle=False, num_workers=config['num_workers'], pin_memory=True)}
+    if config.get('val_fraction', 0) > 0:
+        print('Splitting SVHN test set for validation')
+        val_subset, test_subset = create_heldout_split(loaders['test'].dataset, fraction=config['val_fraction'])
+        loaders['val'] = torch.utils.data.DataLoader(val_subset, batch_size=config['batch_size'], shuffle=False, num_workers=config['num_workers'])
+        loaders['test'] = torch.utils.data.DataLoader(test_subset, batch_size=config['batch_size'], shuffle=False, num_workers=config['num_workers'])
+    loaders['class_names'] = test_dataset.classes
     return loaders

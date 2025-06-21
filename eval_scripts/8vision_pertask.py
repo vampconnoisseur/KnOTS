@@ -12,15 +12,17 @@ def run_BIG_function():
     BIGSEED = 420
     set_seed(BIGSEED)
     # Get config
-    CONFIG_NAME = 'vitB_r16_knots_ties'
+    CONFIG_NAME = 'vitB_r16_tv'
     # CONFIG_NAME = 'vitL_r16_knots_ties'
     # CONFIG_NAME = 'vitL_r16_knots_dare_ties'
     # CONFIG_NAME = 'vit_b_r16_knots_dare_ties'
     print("Running with config: ", CONFIG_NAME)
     device = 'cuda' if torch.cuda.is_available() else 'cpu'
+    print(f"Running on device: {device}")
     raw_config = get_config_from_name(CONFIG_NAME, device=device)
     # Get clip encodings
-    all_clip_encodings = [get_clip_encodings(i['clip_encodings']) for i in raw_config['dataset']]
+    # all_clip_encodings = [get_clip_encodings(i['clip_encodings']) for i in raw_config['dataset']]
+    all_clip_encodings = [get_clip_encodings(i['clip_encodings'], device=device) for i in raw_config['dataset']]
     config = prepare_experiment_config(raw_config)
     dataset_names = np.array([i['name'] for i in raw_config['dataset']])
     dataloaders = np.array([i for i in config['data']])
@@ -91,4 +93,3 @@ def run_BIG_function():
     
 if __name__ == "__main__":
     run_BIG_function()
-        

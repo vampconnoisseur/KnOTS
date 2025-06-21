@@ -1,116 +1,59 @@
-import os
-import torchvision.datasets as datasets
-import re
 import torch
+from datasets import load_dataset
+from torch.utils.data import Dataset, DataLoader
 
-import ssl
-ssl._create_default_https_context = ssl._create_unverified_context
+class HFEuroSATDataset(Dataset):
+    def __init__(self, hf_split, transforms=None):
+        self.hf_split = hf_split
+        self.transforms = transforms
 
+    def __len__(self):
+        return len(self.hf_split)
 
-ROOT = "" # Set the root directory to the dataset here
-
-
-def pretify_classname(classname):
-    l = re.findall(r'[A-Z](?:[a-z]+|[A-Z]*(?=[A-Z]|$))', classname)
-    l = [i.lower() for i in l]
-    out = ' '.join(l)
-    if out.endswith('al'):
-        return out + ' area'
-    return out
-
-
-class EuroSATBase:
-    def __init__(self,
-                 is_train,
-                 train_preprocess,
-                 eval_preprocess,
-                 location=ROOT,
-                 batch_size=32,
-                 num_workers=16):
-        # Data loading code
-        if is_train:
-            traindir = os.path.join(location, 'EuroSAT_splits', 'train')
-
-            self.train_dataset = datasets.ImageFolder(traindir, transform=train_preprocess)
-            self.train_loader = torch.utils.data.DataLoader(
-                self.train_dataset,
-                shuffle=True,
-                batch_size=batch_size,
-                num_workers=num_workers,
-            )
-            dataset = self.train_dataset
-        
-        else:
-            valdir = os.path.join(location, 'EuroSAT_splits', 'val')
-            testdir = os.path.join(location, 'EuroSAT_splits', 'test')
-            
-            self.val_dataset = datasets.ImageFolder(valdir, transform=eval_preprocess)
-            self.val_loader = torch.utils.data.DataLoader(
-                self.val_dataset,
-                batch_size=batch_size,
-                num_workers=num_workers,
-                shuffle=False
-            )
-
-            self.test_dataset = datasets.ImageFolder(testdir, transform=eval_preprocess)
-            self.test_loader = torch.utils.data.DataLoader(
-                self.test_dataset,
-                batch_size=batch_size,
-                num_workers=num_workers,
-                shuffle=False
-            )
-            dataset = self.val_dataset
-        
-        
-        idx_to_class = dict((v, k)
-                            for k, v in dataset.class_to_idx.items())
-        self.classnames = [idx_to_class[i].replace('_', ' ') for i in range(len(idx_to_class))]
-        self.classnames = [pretify_classname(c) for c in self.classnames]
-        ours_to_open_ai = {
-            'annual crop': 'annual crop land',
-            'forest': 'forest',
-            'herbaceous vegetation': 'brushland or shrubland',
-            'highway': 'highway or road',
-            'industrial area': 'industrial buildings or commercial buildings',
-            'pasture': 'pasture land',
-            'permanent crop': 'permanent crop land',
-            'residential area': 'residential buildings or homes or apartments',
-            'river': 'river',
-            'sea lake': 'lake or sea',
-        }
-        for i in range(len(self.classnames)):
-            self.classnames[i] = ours_to_open_ai[self.classnames[i]]
-    
+    def __getitem__(self, idx):
+        item = self.hf_split[idx]
+        image = item['image'].convert("RGB")
+        label = item['label']
+        if self.transforms:
+            image = self.transforms(image)
+        return image, label
 
 def prepare_train_loaders(config):
-    dataset_class = EuroSATBase(
-        is_train=True,
-        train_preprocess=config['train_preprocess'], 
-        eval_preprocess=config['eval_preprocess'],
-        location=ROOT,
-        batch_size=config['batch_size'],
-        num_workers=config['num_workers'],
+    hf_train_split = load_dataset("tanganke/eurosat", split="train", cache_dir=config.get('hf_cache_dir'))
+    
+    train_dataset = HFEuroSATDataset(
+        hf_split=hf_train_split,
+        transforms=config['train_preprocess']
     )
+
     loaders = {
-        'full': dataset_class.train_loader
+        'full': DataLoader(
+            train_dataset,
+            batch_size=config['batch_size'],
+            shuffle=True,
+            num_workers=config['num_workers']
+        )
     }
     return loaders
 
 def prepare_test_loaders(config):
-    dataset_class = EuroSATBase(
-        is_train=False,
-        train_preprocess=config['train_preprocess'], 
-        eval_preprocess=config['eval_preprocess'],
-        location=ROOT,
-        batch_size=config['batch_size'],
-        num_workers=config['num_workers'],
-    )
+    hf_full_test_split = load_dataset("tanganke/eurosat", split="test", cache_dir=config.get('hf_cache_dir'))
+    split_dict = hf_full_test_split.train_test_split(test_size=0.8, seed=42)
+    hf_val_split = split_dict['train']
+    hf_test_split = split_dict['test']
     
+    val_dataset = HFEuroSATDataset(hf_split=hf_val_split, transforms=config['eval_preprocess'])
+    test_dataset = HFEuroSATDataset(hf_split=hf_test_split, transforms=config['eval_preprocess'])
+
     loaders = {
-        'val': dataset_class.val_loader,
-        'test': dataset_class.test_loader,
-        'class_names': dataset_class.classnames
+        'val': DataLoader(val_dataset, batch_size=config['batch_size'], shuffle=False, num_workers=config['num_workers']),
+        'test': DataLoader(test_dataset, batch_size=config['batch_size'], shuffle=False, num_workers=config['num_workers']),
     }
     
+    final_classnames = load_dataset("tanganke/eurosat", split="train").features['label'].names
+    
+    print("Final classnames loaded directly from dataset:", final_classnames)
+    
+    loaders['class_names'] = final_classnames
+    
     return loaders
-

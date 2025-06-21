@@ -14,8 +14,8 @@ def run_BIG_function():
     print("Seed : ", BIGSEED)
     set_seed(BIGSEED)
     # Get config
-    # CONFIG_NAME = 'vitB_r16_knots_dare_ties'
-    CONFIG_NAME = 'vitB_r16_dare_ties'
+    # CONFIG_NAME = 'vitB_r16_knots_ties'
+    CONFIG_NAME = 'vitB_r16_tv'
     
     device = 'cuda' if torch.cuda.is_available() else 'cpu'
     raw_config = get_config_from_name(CONFIG_NAME, device=device)

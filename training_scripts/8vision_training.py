@@ -31,21 +31,7 @@ class EarlyStopper:
         return False
 
 def train_cliphead_lora(model, train_loader, val_loader, test_loader, class_vectors, remap_class_idxs=None, eval_class_vectors=None, clip_mapper=None, training_config = None, model_save_path = None):
-    """Train a cliphead model.
-    
-    Args:
-        model: cliphead model
-        train_loader: dataloader to train on
-        val_loader: dataloader to validate on
-        test_loader: dataloader to test on
-        class_vectors: clip label encodings
-        remap_class_idxs: array or mapping from true class labels to those expected given the task
-        epochs: number of epochs to train for
-    Returns:
-        model: trained cliphead model
-        train_acc: training accuracy
-    """
-    # wandb.log(training_config)
+
     epochs = training_config['epochs']
     optimizer = torch.optim.AdamW(model.parameters(), lr= training_config['lr'], weight_decay=training_config['wd'])
     ne_iters = len(train_loader)
@@ -65,7 +51,7 @@ def train_cliphead_lora(model, train_loader, val_loader, test_loader, class_vect
             optimizer.zero_grad(set_to_none=True)
             encodings = model(inputs.to(device))
             normed_encodings = encodings / encodings.norm(dim=-1, keepdim=True)
-            logits = (100.0 * normed_encodings @ class_vectors.T)
+            logits = (100.0 * normed_encodings @ class_vectors.to(device).T)
     
             if remap_class_idxs is not None:
                 remapped_labels = remap_class_idxs[labels].to(device)
@@ -106,9 +92,7 @@ def train_cliphead_lora(model, train_loader, val_loader, test_loader, class_vect
     return model, test_acc, test_loss, val_acc, val_loss
 
 def print_trainable_parameters(model):
-    """
-    Prints the number of trainable parameters in the model.
-    """
+
     trainable_params = 0
     all_param = 0
     for _, param in model.named_parameters():
@@ -162,7 +146,29 @@ def train_functional(training_config = None):
         dataset_config['eval_preprocess'] = lora_ptm.val_preprocess
     
     data_loaders = prepare_data(raw_config['dataset'], device=device)
-    all_clip_encodings = [get_clip_encodings(i['clip_encodings']) for i in raw_config['dataset']]
+
+    print("Preparing CLIP text encodings...")
+    all_clip_encodings = []
+
+    for idx, dataset_config in enumerate(raw_config['dataset']):
+        encoding_path = dataset_config['clip_encodings']
+        
+        if os.path.exists(encoding_path):
+            print(f"Loading existing CLIP encodings from {encoding_path}")
+            encodings = get_clip_encodings(encoding_path)
+        else:
+            print(f"File not found: {encoding_path}. Generating new encodings...")
+            
+            os.makedirs(os.path.dirname(encoding_path), exist_ok=True)
+            
+            class_names = data_loaders[idx]['test']['class_names']
+            
+            encodings = load_clip_features(class_names, device, model_name=VIT_PATH)
+            
+            print(f"Saving new encodings to {encoding_path}")
+            torch.save(encodings, encoding_path)
+            
+        all_clip_encodings.append(encodings)
     
     model_save_dir = os.path.join(MODEL_SAVE_DIR, f"lora_rank{lc['r']}")
     
@@ -173,7 +179,7 @@ def train_functional(training_config = None):
 
         save_path = os.path.join(
             model_save_dir, 
-            f"{training_config['dataset']}_lr_{training_config['lr']}_wd_{training_config['wd']}_max_steps_{training_config['max_steps']}_early_stopping_patience_{training_config['early_stopping_patience']}_rescaling_weights{training_config['rescaling_weights']}.pt"
+            f"{training_config['dataset']}.pt"
         )
         print(f'Finetuning LoRA on {dataset_name}')
         lora_model = deepcopy(lora_ptm)
@@ -204,7 +210,7 @@ if __name__ == "__main__":
     'early_stopping_patience' : 5,
     'epochs' : 1000,
     'max_steps' : 50000,
-    'dataset' : "svhn",
+    'dataset' : "stanford_cars",
     'eval_freq' : 2000,
     # 'lora_rank' : 4,
     # 'lr' : 8e-4,
