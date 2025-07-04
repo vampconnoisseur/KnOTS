@@ -1,6 +1,6 @@
 CACHE_DIR = ''          # Path to the cache directory
 MODEL_DIR = ''          # Path to the model directory
-INGREDIENTS_PATH = ""   # Path to the ingredients file (If exists)
+INGREDIENTS_PATH = "./nli_svd_ingredients.pt"   # Path to the ingredients file (If exists)
 PTM_PATH = ""           # Path to the pre-trained model
 
 config = {
@@ -85,4 +85,3 @@ config = {
     },
     'eval_type': 'logits',
 }
-

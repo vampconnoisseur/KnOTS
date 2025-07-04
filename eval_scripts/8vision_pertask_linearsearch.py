@@ -196,4 +196,3 @@ def run_BIG_function():
             
 if __name__ == "__main__":
     run_BIG_function()
-        

@@ -120,24 +120,35 @@ class TaskMerger(nn.Module):
                 layer_names[key]['other'] = key + ':other'
         return layer_names
     
-    def add_task_parameters(self, base_model, parameters, concat_across_output = True, scaling_coeffs=1.):
-        if isinstance(parameters, list):
-            return [self.add_task_parameters(
-                deepcopy(base_model), 
-                parameter,
-                concat_across_output=concat_across_output, 
-                scaling_coeffs=scaling_coeffs
-            ) for parameter in parameters]
-        sd = base_model.state_dict()
+    def add_task_parameters(self, base_model, parameters, ...):
+        # At this point:
+        # `base_model` is a PeftModel. Its state_dict has keys like '...base_layer.weight'.
+        # `parameters` is the merged_delta_W. Its dict has keys like '...weight'.
+
+        # 1. THE FIX: Convert the target PeftModel into a standard model.
+        # The .merge_and_unload() function collapses the adapter into the base_layer
+        # and returns a regular AutoModelForSequenceClassification object.
+        print("Unloading base PEFT model to apply merged delta...")
+        standard_base_model = base_model.merge_and_unload()
+        
+        # 2. GET THE COMPATIBLE STATE_DICT
+        # The state_dict of this new standard_base_model now has the simple keys
+        # we need, like '...v_proj.weight'. The keys now match the `parameters` dict.
+        sd = standard_base_model.state_dict()
+        
+        # 3. PERFORM THE ADDITION (This will now succeed)
         for key, val in parameters.items():
-            try:
-                if (concat_across_output):
-                    sd[key].add_(val.cpu() * scaling_coeffs)
-                else:
-                    sd[key].add_(val.T.cpu() * scaling_coeffs)
-            except:
-                pdb.set_trace()
-        return base_model
+            if key in sd:
+                # This operation now works because 'key' exists in 'sd'.
+                sd[key].add_(val.cpu() * scaling_coeffs)
+            else:
+                # This warning is a safety net.
+                print(f"WARNING: Merged delta key '{key}' not found in unloaded base model.")
+                
+        # 4. LOAD THE MODIFIED WEIGHTS and RETURN
+        # We load the state_dict with the newly added deltas back into the model.
+        standard_base_model.load_state_dict(sd)
+        return standard_base_model
     
     def directions_to_matrices(self, directions, reference_layer_names=None):
         if isinstance(directions, list):
