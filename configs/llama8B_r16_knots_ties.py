@@ -33,7 +33,6 @@ config = {
             'name': 'scitail',
             'mask_class': 2,
         },
-    
     ],
     'model': {
         'name' : 'meta-llama/Meta-Llama-3-8B',
@@ -79,7 +78,7 @@ config = {
         'merge_method': 'ties',
         'merging_type': 'mean',
         'scaling_coeffs': [.5],
-        'concat_across_output': True,   # When True: W_concat is of size O x nI; False: W_concat is of size I x nO
+        'concat_across_output': True,
         'dare' : False,
         'dare_pruning_coeffs': 0.0
     },

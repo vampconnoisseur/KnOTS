@@ -18,7 +18,7 @@ import torch
 import scipy
 import random
 import string
-from transformers import AutoModelForSequenceClassification
+from transformers import AutoModelForSequenceClassification, AutoModelForCausalLM, AutoTokenizer
 from peft import get_peft_model, LoraConfig, PeftModel
 
 CONCEPT_TASKS  = list(string.ascii_uppercase)
@@ -442,6 +442,10 @@ def prepare_data(config, device='cuda'):
         from dataset.resisc45 import prepare_train_loaders, prepare_test_loaders
         train_loaders = prepare_train_loaders(data_config)
         test_loaders = prepare_test_loaders(data_config)
+    elif data_config['type'] == 'pushshift_reddit':
+        from dataset.pushshift_reddit import prepare_train_loaders, prepare_test_loaders
+        train_loaders = prepare_train_loaders(data_config)
+        test_loaders = prepare_test_loaders(data_config)
     else:
         raise NotImplementedError(config['type'])
     
@@ -485,33 +489,77 @@ def check_sd_almost_equal(base, desired, okay_set=None):
                 return False
     return True
 
+# def prepare_llama(config, device):
+#     """Load LLama models from config."""
+#     bases = []
+#     peft_config = LoraConfig(task_type=config["peft_config"]["task_type"],
+#                                 inference_mode=config["peft_config"]["inference_mode"],
+#                                 r=config["peft_config"]["r"],
+#                                 lora_alpha=config["peft_config"]["lora_alpha"],
+#                                 lora_dropout=config["peft_config"]["lora_dropout"],
+#                                 target_modules = config["peft_config"]["target_modules"],
+#                                 )
+#     model_name_or_path = config['name']
+#     ptm_model = AutoModelForSequenceClassification.from_pretrained(
+#                     model_name_or_path, return_dict=True, cache_dir=config['cachedir'], num_labels = 3)
+#     base_model = get_peft_model(ptm_model,peft_config)
+#     for idx, base_path in tqdm(enumerate(config['bases']), desc="Preparing Models", position=0, leave=True):
+#         if base_path.endswith('.pt'):
+#             base_model.load_state_dict(torch.load(base_path, map_location='cpu')) # Load fine-tuned model from local directory
+#         else: 
+#             base_model = PeftModel.from_pretrained(model = ptm_model, model_id = base_path) # Load model adapter from HF
+#         bases += [deepcopy(base_model)]
+#     # ptm_model_path = 'pretrained.pt' # load ptm_model from local directory
+#     # base_model.load_state_dict(torch.load(ptm_model_path, map_location='cpu'))
+#     ptm_model_path = 'hoffman-lab/KnOTS-Llama3_8B_lora_R16_pretrained_model'
+#     base_model = PeftModel.from_pretrained(model = ptm_model, model_id = ptm_model_path) # Load ptm_model from HF
+#     return {
+#         'bases': bases,
+#         'new': base_model
+#     }
+
+# In utils.py
+
 def prepare_llama(config, device):
-    """Load LLama models from config."""
     bases = []
-    peft_config = LoraConfig(task_type=config["peft_config"]["task_type"],
-                                inference_mode=config["peft_config"]["inference_mode"],
-                                r=config["peft_config"]["r"],
-                                lora_alpha=config["peft_config"]["lora_alpha"],
-                                lora_dropout=config["peft_config"]["lora_dropout"],
-                                target_modules = config["peft_config"]["target_modules"],
-                                )
+    peft_config = LoraConfig(
+        task_type=config["peft_config"]["task_type"],
+        inference_mode=config["peft_config"]["inference_mode"],
+        r=config["peft_config"]["r"],
+        lora_alpha=config["peft_config"]["lora_alpha"],
+        lora_dropout=config["peft_config"]["lora_dropout"],
+        target_modules=config["peft_config"]["target_modules"],
+    )
+
+    if config["peft_config"]["task_type"] != "SEQ_CLS":
+        raise ValueError("This function is configured for Sequence Classification (SEQ_CLS).")
+
     model_name_or_path = config['name']
+    
+    print("Loading base model and tokenizer once...")
+    tokenizer = AutoTokenizer.from_pretrained(model_name_or_path)
+    if tokenizer.sep_token is None:
+        tokenizer.add_special_tokens({'sep_token': '[SEP]'})
+
     ptm_model = AutoModelForSequenceClassification.from_pretrained(
-                    model_name_or_path, return_dict=True, cache_dir=config['cachedir'], num_labels = 3)
-    base_model = get_peft_model(ptm_model,peft_config)
-    for idx, base_path in tqdm(enumerate(config['bases']), desc="Preparing Models", position=0, leave=True):
-        if base_path.endswith('.pt'):
-            base_model.load_state_dict(torch.load(base_path, map_location='cpu')) # Load fine-tuned model from local directory
-        else: 
-            base_model = PeftModel.from_pretrained(model = ptm_model, model_id = base_path) # Load model adapter from HF
-        bases += [deepcopy(base_model)]
-    # ptm_model_path = 'pretrained.pt' # load ptm_model from local directory
-    # base_model.load_state_dict(torch.load(ptm_model_path, map_location='cpu'))
-    ptm_model_path = 'hoffman-lab/KnOTS-Llama3_8B_lora_R16_pretrained_model'
-    base_model = PeftModel.from_pretrained(model = ptm_model, model_id = ptm_model_path) # Load ptm_model from HF
+        model_name_or_path,
+        return_dict=True,
+        cache_dir=config['cachedir'],
+        num_labels=config['num_labels']
+    )
+    ptm_model.resize_token_embeddings(len(tokenizer))
+    if ptm_model.config.pad_token_id is None:
+        ptm_model.config.pad_token_id = tokenizer.eos_token_id
+
+    for base_path in tqdm(config['bases'], desc="Loading adapters"):
+        peft_model = PeftModel.from_pretrained(ptm_model, base_path)
+        bases.append(deepcopy(peft_model))
+
+    new_model = get_peft_model(ptm_model, peft_config)
+
     return {
         'bases': bases,
-        'new': base_model
+        'new': new_model
     }
     
 def prepare_hf_clip(config, device):
