@@ -120,35 +120,24 @@ class TaskMerger(nn.Module):
                 layer_names[key]['other'] = key + ':other'
         return layer_names
     
-    def add_task_parameters(self, base_model, parameters, ...):
-        # At this point:
-        # `base_model` is a PeftModel. Its state_dict has keys like '...base_layer.weight'.
-        # `parameters` is the merged_delta_W. Its dict has keys like '...weight'.
-
-        # 1. THE FIX: Convert the target PeftModel into a standard model.
-        # The .merge_and_unload() function collapses the adapter into the base_layer
-        # and returns a regular AutoModelForSequenceClassification object.
-        print("Unloading base PEFT model to apply merged delta...")
-        standard_base_model = base_model.merge_and_unload()
-        
-        # 2. GET THE COMPATIBLE STATE_DICT
-        # The state_dict of this new standard_base_model now has the simple keys
-        # we need, like '...v_proj.weight'. The keys now match the `parameters` dict.
-        sd = standard_base_model.state_dict()
-        
-        # 3. PERFORM THE ADDITION (This will now succeed)
+    def add_task_parameters(self, base_model, parameters, concat_across_output = True, scaling_coeffs=1.):
+        if isinstance(parameters, list):
+            return [self.add_task_parameters(
+                deepcopy(base_model), 
+                parameter,
+                concat_across_output=concat_across_output, 
+                scaling_coeffs=scaling_coeffs
+            ) for parameter in parameters]
+        sd = base_model.state_dict()
         for key, val in parameters.items():
-            if key in sd:
-                # This operation now works because 'key' exists in 'sd'.
-                sd[key].add_(val.cpu() * scaling_coeffs)
-            else:
-                # This warning is a safety net.
-                print(f"WARNING: Merged delta key '{key}' not found in unloaded base model.")
-                
-        # 4. LOAD THE MODIFIED WEIGHTS and RETURN
-        # We load the state_dict with the newly added deltas back into the model.
-        standard_base_model.load_state_dict(sd)
-        return standard_base_model
+            try:
+                if (concat_across_output):
+                    sd[key].add_(val.cpu() * scaling_coeffs)
+                else:
+                    sd[key].add_(val.T.cpu() * scaling_coeffs)
+            except:
+                pdb.set_trace()
+        return base_model
     
     def directions_to_matrices(self, directions, reference_layer_names=None):
         if isinstance(directions, list):
@@ -350,8 +339,8 @@ class SVDMerger(TaskMerger):
             for key, val in ftm_mats.items():
                 if ':other' in key:
                     other_mats[m_idx][key] = val
-                elif 'modules_to_save' in key:
-                    other_mats[m_idx][key] = val
+                # elif 'modules_to_save' in key:
+                    # other_mats[m_idx][key] = val
                 else:
                     transform_mats[m_idx][key] = val
         print(f'Len other: {len(other_mats[0])}| len: transform: {len(transform_mats[0])}')
@@ -392,7 +381,7 @@ class SVDMerger(TaskMerger):
         if merge_config.get('ingredients_path') is not None:
             torch.save(self.ingredients, merge_config['ingredients_path'])
     
-    def merge(self, merge_config):
+    def merge(self, merge_config, return_state_dict_only=False):
         if merge_config.get('ingredients_path') is not None:
             ingredients = torch.load(merge_config['ingredients_path'])
         else:
@@ -405,7 +394,6 @@ class SVDMerger(TaskMerger):
         task_sVs = ingredients['task_sVs']
         
         if merge_config.get('dare', False):
-            print("Applying DARE")
             task_sVs = self.apply_dare(
                 task_sVs, merge_config['dare_pruning_coeffs'], merge_config['dare_seed']
             )
@@ -432,14 +420,17 @@ class SVDMerger(TaskMerger):
             x, **merge_config, weights=self.scaling_coeffs
         )
         if merge_config.get('merge_other_params', False):
-            merged_others,_ = self.representation_helper(ftms_others,  merging_fn=merging_fn)
+            merged_others,_ = self.representation_helper(ftms_others,merging_fn=merging_fn)
             merged_sd = self.add_others(merged_sd, merged_others)
-        
+            
         merged_sd = self.matrix_to_state_dict(merged_sd, ptm_reference_params)
-        # Add merged sd to the ptm
-        merged_base = deepcopy(self.pretrained_model)
-        merged_model = self.add_task_parameters(merged_base, merged_sd,  concat_across_output = merge_config.get('concat_across_output', True))
-        return merged_model
+        
+        if return_state_dict_only:
+            return merged_sd
+        else:
+            merged_base = deepcopy(self.pretrained_model)
+            merged_model = self.add_task_parameters(merged_base, merged_sd, concat_across_output=merge_config.get('concat_across_output', True))
+            return merged_model
     
 
 def get_merge_handler(rep_type):

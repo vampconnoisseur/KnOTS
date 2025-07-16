@@ -34,8 +34,38 @@ class LoRAHandler(nn.Module):
     
     def get_model(self):
         return self.base_model.get_base_model
-    
-    
+
+
+class LoRAScoreHandler(nn.Module):
+    def __init__(self, model):
+        super().__init__()
+        self.model = model
+        
+    def get_ft_parameters(self):
+        sd = self.model.state_dict()
+        
+        original_key = 'original_module.weight'
+        trainable_key = 'modules_to_save.default.weight'
+
+        if original_key not in sd or trainable_key not in sd:
+            missing_keys = []
+            if original_key not in sd:
+                missing_keys.append(f"'{original_key}'")
+            if trainable_key not in sd:
+                missing_keys.append(f"'{trainable_key}'")
+            raise KeyError(
+                f"Could not find required classification head keys in the state_dict. Missing: {', '.join(missing_keys)}"
+            )
+
+        original_tensor = sd[original_key]
+        trainable_tensor = sd[trainable_key]
+
+        params = OrderedDict()
+        params[original_key] = original_tensor
+        params[trainable_key] = trainable_tensor
+            
+        return params
+
 class FFTHandler(nn.Module):
     def __init__(self, base_model):
         super().__init__()
