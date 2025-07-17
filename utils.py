@@ -446,6 +446,10 @@ def prepare_data(config, device='cuda'):
         from dataset.pushshift_reddit import prepare_train_loaders, prepare_test_loaders
         train_loaders = prepare_train_loaders(data_config)
         test_loaders = prepare_test_loaders(data_config)
+    elif data_config['type'] == 'curated_dual_label':
+        from dataset.curated_reddit import prepare_curated_loaders
+        train_loaders = {} 
+        test_loaders = prepare_curated_loaders(data_config)
     else:
         raise NotImplementedError(config['type'])
     

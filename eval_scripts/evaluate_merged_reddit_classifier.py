@@ -10,10 +10,8 @@ from collections import OrderedDict
 from utils import get_config_from_name, prepare_experiment_config, write_to_csv, set_seed
 from task_merger import get_merge_handler
 from ft_handlers import LoRAScoreHandler
-from dataset.pushshift_reddit import prepare_test_loaders
+from dataset.curated_reddit import prepare_curated_loaders
 from configs.reddit_classification_shared import (
-    LIFESTYLE_SUBREDDITS, SCIENCE_TECH_SUBREDDITS, GAMING_SUBREDDITS,
-    FINANCE_SUBREDDITS, AUTOMOTIVE_SUBREDDITS, HOBBIES_SUBREDDITS,
     ID_TO_SUBREDDIT
 )
 
@@ -35,60 +33,41 @@ class StateDictModel(torch.nn.Module):
     def state_dict(self):
         return self._sd
 
-def evaluate_standard_accuracy(model, loader, device):
-    model.to(device)
-    model.eval()
-    all_preds, all_labels = [], []
-    with torch.no_grad():
-        for batch in tqdm(loader, desc="Evaluating Standard Accuracy", leave=False):
-            labels = batch.pop('labels').to(device)
-            inputs = {k: v.to(device) for k, v in batch.items()}
-            outputs = model(**inputs)
-            preds = torch.argmax(outputs.logits, dim=-1)
-            all_preds.extend(preds.cpu().numpy())
-            all_labels.extend(labels.cpu().numpy())
-    if not all_labels: return 0.0
-    return np.mean(np.array(all_preds) == np.array(all_labels))
-
-
-def evaluate_multi_domain_hits(model, loader, device, domain_subreddit_sets, top_k=TOP_K):
+def evaluate_dual_label_accuracy(model, loader, device, top_k=TOP_K):
     model.to(device)
     model.eval()
 
-    multi_domain_hits = 0
+    correct_predictions = 0
     total_samples = 0
 
-    domain_sets = [set(domain) for domain in domain_subreddit_sets]
-
     with torch.no_grad():
-        for batch in tqdm(loader, desc=f"Evaluating Top-{top_k} Multi-Domain Hits", leave=False):
-            batch.pop('labels', None)
+        for batch in tqdm(loader, desc=f"Evaluating Top-{top_k} Dual-Label Accuracy", leave=False):
+            multi_hot_labels = batch.pop('labels').to(device)
             inputs = {k: v.to(device) for k, v in batch.items()}
             
             outputs = model(**inputs)
             
             top_k_preds_indices = torch.topk(outputs.logits, k=top_k, dim=-1).indices
 
-            for single_example_preds in top_k_preds_indices:
-                predicted_subreddits = {ID_TO_SUBREDDIT[idx.item()] for idx in single_example_preds}
+            for i in range(len(inputs['input_ids'])):
+                predicted_indices_set = set(top_k_preds_indices[i].cpu().numpy())
                 
-                all_domains_hit = all(
-                    not predicted_subreddits.isdisjoint(domain_set) for domain_set in domain_sets
-                )
-
-                if all_domains_hit:
-                    multi_domain_hits += 1
+                true_indices_tensor = torch.where(multi_hot_labels[i] == 1)[0]
+                true_indices_set = set(true_indices_tensor.cpu().numpy())
+                
+                if true_indices_set.issubset(predicted_indices_set):
+                    correct_predictions += 1
             
             total_samples += len(inputs['input_ids'])
 
     if total_samples == 0: return 0.0
-    return (multi_domain_hits / total_samples) * 100
+    return (correct_predictions / total_samples) * 100
 
 
 def run_reddit_evaluation():
     CONFIG_NAME = 'reddit_merge_classification_config'
     COMPUTE_TRANSFORM = False
-    HEADS_PATH = "reddit_heads_4_tasks.pt"
+    HEADS_PATH = "reddit_heads_2_tasks.pt"
     
     SEED = 123
     set_seed(SEED)
@@ -107,24 +86,15 @@ def run_reddit_evaluation():
         d_config['subreddit_to_id'] = subreddit_to_id
         d_config['num_workers'] = 0
 
-    print("Preparing experiment config (models and expert test data)...")
+    print("Preparing experiment config (loading base models)...")
     config = prepare_experiment_config(raw_config)
 
-    print("Preparing mixed-domain evaluation loader (ELI5)...")
-    mixed_eval_config = raw_config['mixed_eval_dataset']
-    mixed_eval_config['tokenizer'] = tokenizer
-    mixed_eval_config['subreddit_to_id'] = subreddit_to_id
-    mixed_eval_config['num_workers'] = 0
-    mixed_domain_loader = prepare_test_loaders(mixed_eval_config)['test']
-
-    DOMAIN_SETS_TO_EVALUATE = [
-        # LIFESTYLE_SUBREDDITS,
-        SCIENCE_TECH_SUBREDDITS,
-        GAMING_SUBREDDITS,
-        # FINANCE_SUBREDDITS,
-        # AUTOMOTIVE_SUBREDDITS,
-        # HOBBIES_SUBREDDITS
-    ]
+    print("Preparing curated dual-label evaluation loader...")
+    curated_eval_config = raw_config['curated_eval_dataset']
+    curated_eval_config['tokenizer'] = tokenizer
+    curated_eval_config['subreddit_to_id'] = subreddit_to_id
+    curated_eval_config['num_workers'] = 0
+    curated_loader = prepare_curated_loaders(curated_eval_config)['test']
 
     print(f"Loading task-specific heads from {HEADS_PATH}...")
     task_heads = torch.load(HEADS_PATH, weights_only=True)
@@ -140,24 +110,22 @@ def run_reddit_evaluation():
         print('Merging models (Backbone Only)...')
         merged_model = BackboneMerge.merge(instance_params)
 
-        print(f'\n--- Evaluating Merged Backbone on Mixed-Domain Task (ELI5) ---')
+        print(f'\n--- Evaluating Merged Backbone on Curated Dual-Label Task ---')
         
         head_types_to_test = {
             "SVD_MERGED": svd_merged_head_sd,
             "AVERAGED": avg_merged_head_sd,
-            # **individual_heads_sd
         }
 
         for head_name, head_sd in head_types_to_test.items():
             print(f"\n  Injecting '{head_name}' head for evaluation...")
             merged_model.score.load_state_dict(head_sd, strict=True)
-            multi_domain_accuracy = evaluate_multi_domain_hits(
-                merged_model, mixed_domain_loader, device,
-                domain_subreddit_sets=DOMAIN_SETS_TO_EVALUATE,
-                top_k=TOP_K
+            
+            dual_label_accuracy = evaluate_dual_label_accuracy(
+                merged_model, curated_loader, device, top_k=TOP_K
             )
-            print(f"  > Top-{TOP_K} Multi-Domain Hit Rate (with {head_name} Head): {multi_domain_accuracy:.2f}%")
-            all_results[f'top-{TOP_K}_multi_domain_accuracy_{head_name}_head'] = multi_domain_accuracy
+            print(f"  > Top-{TOP_K} Dual-Label Accuracy (with {head_name} Head): {dual_label_accuracy:.2f}%")
+            all_results[f'top-{TOP_K}_dual_label_accuracy_{head_name}_head'] = dual_label_accuracy
 
         write_to_csv(all_results, csv_file)
         return all_results

@@ -8,25 +8,23 @@ from .reddit_classification_shared import (
 
 CWD = os.getcwd()
 CACHE_DIR = ""
-MODEL_DIR = "./lora_rank16_4_tasks"
-INGREDIENTS_PATH = os.path.join(CWD, "reddit_classification_ingredients_2_tasks.pt")
+MODEL_DIR = "./lora_rank16_2_tasks"
+INGREDIENTS_PATH = os.path.join(CWD, "reddit_classification_ingredients_2_tasks.pt") 
 
 config = {
     'dataset': [
-        # {'name': 'reddit_lifestyle_culture', 'subreddits': LIFESTYLE_SUBREDDITS, 'type': 'pushshift_reddit', 'batch_size': 8},
+        {'name': 'reddit_lifestyle_culture', 'subreddits': LIFESTYLE_SUBREDDITS, 'type': 'pushshift_reddit', 'batch_size': 8},
         {'name': 'reddit_science_culture', 'subreddits': SCIENCE_TECH_SUBREDDITS, 'type': 'pushshift_reddit', 'batch_size': 8},
-        {'name': 'reddit_gaming_culture', 'subreddits': GAMING_SUBREDDITS, 'type': 'pushshift_reddit', 'batch_size': 8},
-        {'name': 'reddit_finance_culture', 'subreddits': FINANCE_SUBREDDITS, 'type': 'pushshift_reddit', 'batch_size': 8},
-        {'name': 'reddit_automotive_culture', 'subreddits': AUTOMOTIVE_SUBREDDITS, 'type': 'pushshift_reddit', 'batch_size': 8},
-        # {'name': 'reddit_hobbies_culture', 'subreddits': HOBBIES_SUBREDDITS, 'type': 'pushshift_reddit', 'batch_size': 8},
+        # {'name': 'reddit_gaming_culture', 'subreddits': GAMING_SUBREDDITS, 'type': 'pushshift_reddit', 'batch_size': 8},
+        # {'name': 'reddit_finance_culture', 'subreddits': FINANCE_SUBREDDITS, 'type': 'pushshift_reddit', 'batch_size': 8},
+        # {'name': 'reddit_automotive_culture', 'subreddits': AUTOMOTIVE_SUBREDDITS, 'type': 'pushshift_reddit', 'batch_size': 8},
     ],
     
-    'mixed_eval_dataset': {
-        'name': 'reddit_mixed_domain_eli5',
-        'subreddits': ['explainlikeimfive'],
-        'type': 'pushshift_reddit',
+    'curated_eval_dataset': {
+        'name': 'reddit_curated_dual_label',
+        'type': 'curated_dual_label',
+        'path': './curated_dual_label_dataset.jsonl',
         'batch_size': 8,
-        'num_test_samples': 2000,
     },
 
     'model': {
@@ -35,12 +33,11 @@ config = {
         'subreddit_to_id': SUBREDDIT_TO_ID,
         'num_labels': NUM_LABELS,
         'bases': [
-            # f'{MODEL_DIR}/reddit_lifestyle_culture_lora',
             f'{MODEL_DIR}/reddit_science_culture_lora',
-            f'{MODEL_DIR}/reddit_gaming_culture_lora',
-            f'{MODEL_DIR}/reddit_finance_culture_lora',
-            f'{MODEL_DIR}/reddit_automotive_culture_lora',
-            # f'{MODEL_DIR}/reddit_hobbies_culture_lora',
+            f'{MODEL_DIR}/reddit_lifestyle_culture_lora',
+            # f'{MODEL_DIR}/reddit_gaming_culture_lora',
+            # f'{MODEL_DIR}/reddit_finance_culture_lora',
+            # f'{MODEL_DIR}/reddit_automotive_culture_lora',
         ],
         'ft_config': {'type': 'lora'},
         'peft_config': {
@@ -49,7 +46,6 @@ config = {
             'r': 16,
             'lora_alpha' : 16,
             'lora_dropout' : 0.1,
-            # 'target_modules' : ["q_proj", "k_proj", "v_proj", "o_proj", "gate_proj", "up_proj", "down_proj"]
             'target_modules' : ["q_proj", "k_proj", "v_proj", "o_proj"]
         },
     },
@@ -60,8 +56,7 @@ config = {
         'topK': 100,
         'merge_method': 'ties',
         'merging_type': 'mean',
-        # 'scaling_coeffs': [1/6],
-        'scaling_coeffs': [1/4],
+        'scaling_coeffs': [1/2],
         'concat_across_output': True,
         'dare' : False,
         'dare_pruning_coeffs': 0.0
