@@ -3,12 +3,16 @@ from peft import PeftModel
 from transformers import AutoModelForSequenceClassification
 
 ADAPTER_PATHS = {
-    "reddit_lifestyle_culture": "./lora_rank16/reddit_lifestyle_culture_lora",
-    "reddit_science_culture": "./lora_rank16/reddit_science_culture_lora",
+    # "reddit_lifestyle_culture": "./lora_rank16_4_tasks/reddit_lifestyle_culture_lora",
+    "reddit_science_culture": "./lora_rank16_4_tasks/reddit_science_culture_lora",
+    "reddit_gaming_culture": "./lora_rank16_4_tasks/reddit_gaming_culture_lora",
+    "reddit_finance_culture": "./lora_rank16_4_tasks/reddit_finance_culture_lora",
+    "reddit_automotive_culture": "./lora_rank16_4_tasks/reddit_automotive_culture_lora",
+    # "reddit_hobbies_culture": "./lora_rank16/reddit_hobbies_culture_lora",
 }
 BASE_MODEL_NAME = "meta-llama/Llama-3.2-3B"
-NUM_LABELS = 14 
-SAVE_PATH = "reddit_heads.pt"
+from configs.reddit_classification_shared import NUM_LABELS 
+SAVE_PATH = "reddit_heads_4_tasks.pt"
 
 if __name__ == "__main__":
     print(f"Loading base model: {BASE_MODEL_NAME}")

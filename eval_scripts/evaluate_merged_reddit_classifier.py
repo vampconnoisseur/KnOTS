@@ -11,10 +11,16 @@ from utils import get_config_from_name, prepare_experiment_config, write_to_csv,
 from task_merger import get_merge_handler
 from ft_handlers import LoRAScoreHandler
 from dataset.pushshift_reddit import prepare_test_loaders
-from configs.reddit_classification_shared import LIFESTYLE_SUBREDDITS, SCIENCE_TECH_SUBREDDITS, ID_TO_SUBREDDIT
+from configs.reddit_classification_shared import (
+    LIFESTYLE_SUBREDDITS, SCIENCE_TECH_SUBREDDITS, GAMING_SUBREDDITS,
+    FINANCE_SUBREDDITS, AUTOMOTIVE_SUBREDDITS, HOBBIES_SUBREDDITS,
+    ID_TO_SUBREDDIT
+)
 
 os.environ["TOKENIZERS_PARALLELISM"] = "true"
 transformers.utils.logging.set_verbosity(transformers.logging.ERROR)
+
+TOP_K=5
 
 try:
     token = os.getenv('HUGGINGFACE_TOKEN')
@@ -45,18 +51,17 @@ def evaluate_standard_accuracy(model, loader, device):
     return np.mean(np.array(all_preds) == np.array(all_labels))
 
 
-def evaluate_dual_domain_hits(model, loader, device, top_k=5):
+def evaluate_multi_domain_hits(model, loader, device, domain_subreddit_sets, top_k=TOP_K):
     model.to(device)
     model.eval()
 
-    science_set = set(SCIENCE_TECH_SUBREDDITS)
-    lifestyle_set = set(LIFESTYLE_SUBREDDITS)
-
-    dual_domain_hits = 0
+    multi_domain_hits = 0
     total_samples = 0
 
+    domain_sets = [set(domain) for domain in domain_subreddit_sets]
+
     with torch.no_grad():
-        for batch in tqdm(loader, desc=f"Evaluating Top-{top_k} Dual Domain Hits", leave=False):
+        for batch in tqdm(loader, desc=f"Evaluating Top-{top_k} Multi-Domain Hits", leave=False):
             batch.pop('labels', None)
             inputs = {k: v.to(device) for k, v in batch.items()}
             
@@ -67,22 +72,23 @@ def evaluate_dual_domain_hits(model, loader, device, top_k=5):
             for single_example_preds in top_k_preds_indices:
                 predicted_subreddits = {ID_TO_SUBREDDIT[idx.item()] for idx in single_example_preds}
                 
-                has_science_hit = not predicted_subreddits.isdisjoint(science_set)
-                has_lifestyle_hit = not predicted_subreddits.isdisjoint(lifestyle_set)
+                all_domains_hit = all(
+                    not predicted_subreddits.isdisjoint(domain_set) for domain_set in domain_sets
+                )
 
-                if has_science_hit and has_lifestyle_hit:
-                    dual_domain_hits += 1
+                if all_domains_hit:
+                    multi_domain_hits += 1
             
             total_samples += len(inputs['input_ids'])
 
     if total_samples == 0: return 0.0
-    return (dual_domain_hits / total_samples) * 100
+    return (multi_domain_hits / total_samples) * 100
 
 
 def run_reddit_evaluation():
     CONFIG_NAME = 'reddit_merge_classification_config'
     COMPUTE_TRANSFORM = False
-    HEADS_PATH = "reddit_heads.pt"
+    HEADS_PATH = "reddit_heads_4_tasks.pt"
     
     SEED = 123
     set_seed(SEED)
@@ -111,6 +117,15 @@ def run_reddit_evaluation():
     mixed_eval_config['num_workers'] = 0
     mixed_domain_loader = prepare_test_loaders(mixed_eval_config)['test']
 
+    DOMAIN_SETS_TO_EVALUATE = [
+        # LIFESTYLE_SUBREDDITS,
+        SCIENCE_TECH_SUBREDDITS,
+        GAMING_SUBREDDITS,
+        # FINANCE_SUBREDDITS,
+        # AUTOMOTIVE_SUBREDDITS,
+        # HOBBIES_SUBREDDITS
+    ]
+
     print(f"Loading task-specific heads from {HEADS_PATH}...")
     task_heads = torch.load(HEADS_PATH, weights_only=True)
 
@@ -126,30 +141,23 @@ def run_reddit_evaluation():
         merged_model = BackboneMerge.merge(instance_params)
 
         print(f'\n--- Evaluating Merged Backbone on Mixed-Domain Task (ELI5) ---')
+        
+        head_types_to_test = {
+            "SVD_MERGED": svd_merged_head_sd,
+            "AVERAGED": avg_merged_head_sd,
+            # **individual_heads_sd
+        }
 
-        print("\n  (1/4) Injecting SVD MERGED head for evaluation...")
-        merged_model.score.load_state_dict(svd_merged_head_sd, strict=True)
-        dual_accuracy_svd_head = evaluate_dual_domain_hits(merged_model, mixed_domain_loader, device, top_k=5)
-        print(f"  > Top-5 Dual Domain Hit Rate (with SVD Merged Head): {dual_accuracy_svd_head:.2f}%")
-        all_results['top5_dual_domain_accuracy_svd_head'] = dual_accuracy_svd_head
-
-        print("\n  (2/4) Injecting AVERAGED head for evaluation...")
-        merged_model.score.load_state_dict(avg_merged_head_sd, strict=True)
-        dual_accuracy_avg_head = evaluate_dual_domain_hits(merged_model, mixed_domain_loader, device, top_k=5)
-        print(f"  > Top-5 Dual Domain Hit Rate (with Averaged Head): {dual_accuracy_avg_head:.2f}%")
-        all_results['top5_dual_domain_accuracy_avg_head'] = dual_accuracy_avg_head
-
-        print("\n  (3/4) Injecting SCIENCE head for evaluation...")
-        merged_model.score.load_state_dict(individual_heads_sd['reddit_science_culture'])
-        dual_accuracy_science_head = evaluate_dual_domain_hits(merged_model, mixed_domain_loader, device, top_k=5)
-        print(f"  > Top-5 Dual Domain Hit Rate (with Science Head): {dual_accuracy_science_head:.2f}%")
-        all_results['top5_dual_domain_accuracy_science_head'] = dual_accuracy_science_head
-
-        print("\n  (4/4) Injecting LIFESTYLE head for evaluation...")
-        merged_model.score.load_state_dict(individual_heads_sd['reddit_lifestyle_culture'])
-        dual_accuracy_lifestyle_head = evaluate_dual_domain_hits(merged_model, mixed_domain_loader, device, top_k=5)
-        print(f"  > Top-5 Dual Domain Hit Rate (with Lifestyle Head): {dual_accuracy_lifestyle_head:.2f}%")
-        all_results['top5_dual_domain_accuracy_lifestyle_head'] = dual_accuracy_lifestyle_head
+        for head_name, head_sd in head_types_to_test.items():
+            print(f"\n  Injecting '{head_name}' head for evaluation...")
+            merged_model.score.load_state_dict(head_sd, strict=True)
+            multi_domain_accuracy = evaluate_multi_domain_hits(
+                merged_model, mixed_domain_loader, device,
+                domain_subreddit_sets=DOMAIN_SETS_TO_EVALUATE,
+                top_k=TOP_K
+            )
+            print(f"  > Top-{TOP_K} Multi-Domain Hit Rate (with {head_name} Head): {multi_domain_accuracy:.2f}%")
+            all_results[f'top-{TOP_K}_multi_domain_accuracy_{head_name}_head'] = multi_domain_accuracy
 
         write_to_csv(all_results, csv_file)
         return all_results

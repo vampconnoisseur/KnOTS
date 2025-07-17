@@ -1,16 +1,14 @@
-# In configs/reddit_lifestyle_classification_config.py
-
-from .reddit_classification_shared import SUBREDDIT_TO_ID, NUM_LABELS, SCIENCE_TECH_SUBREDDITS
+from .reddit_classification_shared import SUBREDDIT_TO_ID, NUM_LABELS, FINANCE_SUBREDDITS
 import os
 CACHE_DIR = '' 
 
 config = {
     'dataset': [{
-        'name': 'reddit_science_culture',
+        'name': 'reddit_finance_culture',
         'type': 'pushshift_reddit',
         'batch_size': 4,
         'hf_cache_dir': CACHE_DIR,
-        'subreddits': SCIENCE_TECH_SUBREDDITS,
+        'subreddits': FINANCE_SUBREDDITS,
         'num_train_samples': 100000,
         'num_val_samples': 10000,
         'num_test_samples': 10000,

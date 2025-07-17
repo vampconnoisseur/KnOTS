@@ -11,9 +11,9 @@ config = {
         'batch_size': 4,
         'hf_cache_dir': CACHE_DIR,
         'subreddits': LIFESTYLE_SUBREDDITS,
-        'num_train_samples': 10000,
-        'num_val_samples': 1000,
-        'num_test_samples': 1000,
+        'num_train_samples': 100000,
+        'num_val_samples': 10000,
+        'num_test_samples': 10000,
     }],
     'model': {
         'base_type': "meta-llama/Llama-3.2-3B",
@@ -25,7 +25,7 @@ config = {
             'lora_alpha': 16,
             'lora_dropout': 0.05,
             'bias': "none",
-            'target_modules': ["q_proj", "k_proj", "v_proj", "o_proj", "gate_proj", "up_proj", "down_proj"],
+            'target_modules': ["q_proj", "k_proj", "v_proj", "o_proj"],
         },
     },
     'eval_type': 'sequence_classification'

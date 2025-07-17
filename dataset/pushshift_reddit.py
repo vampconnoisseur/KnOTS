@@ -68,9 +68,10 @@ def prepare_train_loaders(config):
     train_loader = _prepare_loaders(
         config=config,
         split_name="train",
-        num_samples=config.get('num_train_samples', 20000),
+        num_samples=config.get('num_train_samples', 100000),
         seed=42
     )
+
     return {'full': train_loader}
 
 def prepare_test_loaders(config):

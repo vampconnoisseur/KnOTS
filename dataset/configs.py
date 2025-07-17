@@ -169,3 +169,27 @@ reddit_science_culture = {
     'batch_size': 2,
     'num_workers': 16,
 }
+
+reddit_gaming_culture = {
+    'type': 'pushshift_reddit',
+    'batch_size': 2,
+    'num_workers': 16,
+}
+
+reddit_finance_culture = {
+    'type': 'pushshift_reddit',
+    'batch_size': 2,
+    'num_workers': 16,
+}
+
+reddit_automotive_culture = {
+    'type': 'pushshift_reddit',
+    'batch_size': 2,
+    'num_workers': 16,
+}
+
+reddit_hobbies_culture = {
+    'type': 'pushshift_reddit',
+    'batch_size': 2,
+    'num_workers': 16,
+}

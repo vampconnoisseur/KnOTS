@@ -8,8 +8,8 @@ from transformers import AutoModelForSequenceClassification
 from configs.reddit_classification_shared import ID_TO_SUBREDDIT, LIFESTYLE_SUBREDDITS, SCIENCE_TECH_SUBREDDITS
 
 # --- Configuration ---
-SCIENCE_ADAPTER_PATH = "./lora_rank16/reddit_science_culture_lora"
-LIFESTYLE_ADAPTER_PATH = "./lora_rank16/reddit_lifestyle_culture_lora"
+SCIENCE_ADAPTER_PATH = "./lora_rank16_4_tasks/reddit_science_culture_lora"
+LIFESTYLE_ADAPTER_PATH = "./lora_rank16_4_tasks/reddit_lifestyle_culture_lora"
 BASE_MODEL_NAME = "meta-llama/Llama-3.2-3B"
 NUM_LABELS = len(ID_TO_SUBREDDIT)
 

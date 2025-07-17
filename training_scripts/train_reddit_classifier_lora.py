@@ -38,9 +38,9 @@ def evaluate_accuracy(model, dataloader, device):
 if __name__ == "__main__":
     parser = argparse.ArgumentParser(description="Fine-tune a Sequence Classification LM with LoRA.")
     parser.add_argument('--config_name', type=str, required=True, help="Name of the classification config file.")
-    parser.add_argument('--model_save_dir', type=str, default="./lora_rank16", help="Dir to save trained adapters.")
-    parser.add_argument('--max_steps', type=int, default=10000, help="Total training steps.")
-    parser.add_argument('--eval_every', type=int, default=1000, help="Evaluate every N steps.")
+    parser.add_argument('--model_save_dir', type=str, default="./lora_rank16_2_tasks", help="Dir to save trained adapters.")
+    parser.add_argument('--max_steps', type=int, default=15000, help="Total training steps.")
+    parser.add_argument('--eval_every', type=int, default=2000, help="Evaluate every N steps.")
     parser.add_argument('--lr', type=float, default=2e-5, help="Learning rate.")
     args = parser.parse_args()
 
