@@ -6,6 +6,7 @@ import transformers
 from huggingface_hub import login
 from copy import deepcopy
 from collections import OrderedDict
+from peft import PeftModel
 
 from utils import get_config_from_name, prepare_experiment_config, write_to_csv, set_seed
 from task_merger import get_merge_handler
@@ -194,6 +195,35 @@ def run_reddit_evaluation():
         final_results = merge_and_eval(BackboneMerge, final_svd_head_sd, final_avg_head_sd, task_heads)
         print("\n--- Final Results ---")
         print(final_results)
+
+        print('\n' + '-'*20)
+        print("--- Evaluating Single Adapter Trained on Mixed Data ---")
+        print('-'*20)
+
+        MODEL_DIR = "./lora_rank16_mixed_ft"
+        mixed_adapter_name = "reddit_mixed_culture_lora"
+        mixed_adapter_path = os.path.join(MODEL_DIR, mixed_adapter_name)
+
+            
+        base_model = config['models']['new']
+        model_with_mixed_adapter = PeftModel.from_pretrained(base_model.base_model, mixed_adapter_path)
+        
+        print(f"\n--- Evaluating Mixed Adapter on Curated Dual-Label Task ---")
+        
+        mixed_adapter_accuracy = evaluate_dual_label_accuracy(
+            model_with_mixed_adapter, curated_loader, device, top_k=TOP_K
+        )
+
+        print(f"  > Top-{TOP_K} Dual-Label Accuracy (Single Mixed Adapter): {mixed_adapter_accuracy:.2f}%")
+
+        mixed_results = {
+            'adapter_path': mixed_adapter_path,
+            f'top-{TOP_K}_dual_label_accuracy': mixed_adapter_accuracy
+        }
+
+        print("\n--- Results for Single Mixed Adapter ---")
+        print(mixed_results)
+
 
 if __name__ == "__main__":
     run_reddit_evaluation()

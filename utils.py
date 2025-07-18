@@ -82,7 +82,6 @@ def combine_lora_layers(model):
     """Combine LoRA AB layers in a Hugging Face ViT model."""
     for i in tqdm(range(len(model.vision_model.base_model.model.encoder.layers))):
         header = f'vision_model.base_model.model.encoder.layers.{i}'
-        # Query module
         query_module = recursively_getattr(model, f'{header}.self_attn.q_proj')
         recursively_setattr(
             model, f'{header}.self_attn.q_proj',
@@ -446,12 +445,12 @@ def prepare_data(config, device='cuda'):
         from dataset.pushshift_reddit import prepare_train_loaders, prepare_test_loaders
         train_loaders = prepare_train_loaders(data_config)
         test_loaders = prepare_test_loaders(data_config)
-    elif data_config['type'] == 'curated_dual_label':
-        from dataset.curated_reddit import prepare_curated_loaders
-        train_loaders = {} 
-        test_loaders = prepare_curated_loaders(data_config)
     else:
-        raise NotImplementedError(config['type'])
+        type_str = data_config.get('type', 'N/A')
+        name_str = data_config.get('name', 'N/A')
+        raise NotImplementedError(
+            f"No data loader found for dataset named '{name_str}' with type '{type_str}'"
+        )
     
     try:
         return {
@@ -675,8 +674,7 @@ def get_mask_fn(name):
     return masking_fns[name]
 
 
-def prepare_experiment_config(config):
-    """ Load all functions/classes/models requested in config to experiment config dict. """
+def prepare_experiment_config(config, preloaded_data=None):
     models = prepare_models(config['model'], device=config['device'])
 
     if len(models['bases']) > 0 and hasattr(models['bases'][0], 'train_preprocess'):
@@ -692,9 +690,14 @@ def prepare_experiment_config(config):
         else:
             config['dataset']['train_preprocess'] = models['bases'][0].train_preprocess
             config['dataset']['eval_preprocess'] = models['bases'][0].val_preprocess
-    
-    
-    data = prepare_data(config['dataset'], device=config['device'])
+
+    if preloaded_data is None:
+        print("No preloaded data found, preparing data now...")
+        data = prepare_data(config['dataset'], device=config['device'])
+    else:
+        print("Using preloaded data.")
+        data = preloaded_data
+
     if config['eval_type'] == 'logits':
         if isinstance(data, list):
             dataset = data[-1]
@@ -766,11 +769,17 @@ def get_device(model):
     """Get the device of the model."""
     return next(iter(model.parameters())).device
 
+def load_clip_features(class_names, device, model_name="openai/clip-vit-base-patch32"):
+    clip_model_name_map = {
+        "openai/clip-vit-base-patch32": "ViT-B/32",
+        "openai/clip-vit-large-patch14": "ViT-L/14",
+    }
+    clip_model_name = clip_model_name_map.get(model_name, model_name)
 
-def load_clip_features(class_names, device):
-    """Create CLIP target labels for class names. Return a normalized tensor of shape (num_classes, 512)."""
+    model, preprocess = clip.load(clip_model_name, device)
+    
     text_inputs = torch.cat([clip.tokenize(f"a photo of a {c}") for c in class_names]).to(device)
-    model, preprocess = clip.load('ViT-B/32', device)
+    
     with torch.no_grad():
         text_features = model.encode_text(text_inputs)
 
@@ -790,7 +799,7 @@ def create_heldout_split(dataset, fraction): # root=dataset.root_og for most dat
     
 
 def save_model(model, save_path):
-    torch.save(model.state_dict(), save_path)
+    model.save_pretrained(save_path)
 
 
 def load_model(model, save_path, model_device='cuda'):
@@ -809,8 +818,8 @@ def mean_confidence_interval(data, confidence=0.95):
     return tuple(np.array([m, h]).round(5).tolist())
 
 
-def get_clip_encodings(path):
-    return torch.load(path)
+def get_clip_encodings(path, device='cpu'):
+    return torch.load(path, map_location=device)
 
 
 def vector_to_state_dict(vector, state_dict, remove_keys=[]):

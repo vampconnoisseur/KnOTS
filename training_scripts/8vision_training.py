@@ -51,7 +51,8 @@ def train_cliphead_lora(model, train_loader, val_loader, test_loader, class_vect
             optimizer.zero_grad(set_to_none=True)
             encodings = model(inputs.to(device))
             normed_encodings = encodings / encodings.norm(dim=-1, keepdim=True)
-            logits = (100.0 * normed_encodings @ class_vectors.to(device).T)
+            
+            logits = (100.0 * normed_encodings @ class_vectors.to(device, dtype=normed_encodings.dtype).T)
     
             if remap_class_idxs is not None:
                 remapped_labels = remap_class_idxs[labels].to(device)
@@ -179,7 +180,7 @@ def train_functional(training_config = None):
 
         save_path = os.path.join(
             model_save_dir, 
-            f"{training_config['dataset']}.pt"
+            training_config['dataset']
         )
         print(f'Finetuning LoRA on {dataset_name}')
         lora_model = deepcopy(lora_ptm)
@@ -198,10 +199,10 @@ def train_functional(training_config = None):
 
 if __name__ == "__main__":
     # Uncomment ViT name/path for the model you want to train from HF
-    # VIT_PATH = "openai/clip-vit-large-patch14"
-    VIT_PATH = "openai/clip-vit-base-patch32"   
-    CACHE_DIR = ''                                      # Path to cache directory 
-    MODEL_SAVE_DIR = ""                                 # Path to save the model
+    VIT_PATH = "openai/clip-vit-large-patch14"
+    # VIT_PATH = "openai/clip-vit-base-patch32"   
+    CACHE_DIR = '.'                                      # Path to cache directory 
+    MODEL_SAVE_DIR = '.'                                # Path to save the model
     CONFIG_NAME = '8vision_train'                       # Training config file name
     #Update the training config here or in config file
     training_config={

@@ -1,103 +1,105 @@
 # from .eurosat import EuroSATBase
-# # from .cars import Cars
+# from .cars import Cars
 # from .dtd import DTD
-# from .mnist import MNIST
-# from .gtsrb import GTSRB
-# # from .svhn import SVHN
+from .mnist import MNIST
+from .gtsrb import GTSRB
+from .svhn import SVHN
 # from .sun397 import SUN397
 # from .resisc45 import RESISC45
-# # from .qnli import QNLI
-# # from .rte import RTE
-# # from .scitail import SCITAIL
+# from .qnli import QNLI
+# from .rte import RTE
+# from .scitail import SCITAIL
 
 
-# eurosat = {
-#     'wrapper': EuroSATBase,
-#     'batch_size': 128,
-#     'res': 224,
-#     'type': 'eurosat',
-#     'num_workers': 8,
-#     'shuffle_train': True,
-#     'shuffle_test': False,
-#     'dir': './data/eurosat'
-# }
 
-# stanford_cars = {
-#     'wrapper': Cars,
-#     'batch_size': 128,
-#     'res': 224,
-#     'type': 'stanford_cars',
-#     'num_workers': 8,
-#     'shuffle_train': True,
-#     'shuffle_test': False,
-#     'dir': './data/stanford_cars'
-# }
 
-# mnist = {
-#     'wrapper': MNIST,
-#     'batch_size': 128,
-#     'res': 224,
-#     'type': 'mnist',
-#     'num_workers': 8,
-#     'shuffle_train': True,
-#     'shuffle_test': False,
-#     'dir': './data/mnist'
-# }
+eurosat = {
+    # 'wrapper': EuroSATBase,
+    'batch_size': 128,
+    'res': 224,
+    'type': 'eurosat',
+    'num_workers': 8,
+    'shuffle_train': True,
+    'shuffle_test': False,
+    'dir': './data/eurosat'
+}
 
-# svhn = {
-#     'wrapper': SVHN,
-#     'batch_size': 128,
-#     'res': 224,
-#     'type': 'svhn',
-#     'num_workers': 8,
-#     'shuffle_train': True,
-#     'shuffle_test': False,
-#     'dir': './data/svhn'
-# }
+stanford_cars = {
+    # 'wrapper': Cars,
+    'batch_size': 128,
+    'res': 224,
+    'type': 'stanford_cars',
+    'num_workers': 8,
+    'shuffle_train': True,
+    'shuffle_test': False,
+    'dir': './data/stanford_cars'
+}
 
-# dtd = {
-#     'wrapper': DTD,
-#     'batch_size': 128,
-#     'res': 224,
-#     'type': 'dtd',
-#     'num_workers': 8,
-#     'shuffle_train': True,
-#     'shuffle_test': False,
-#     'dir': './data/dtd'
-# }
+mnist = {
+    'wrapper': MNIST,
+    'batch_size': 128,
+    'res': 224,
+    'type': 'mnist',
+    'num_workers': 8,
+    'shuffle_train': True,
+    'shuffle_test': False,
+    'dir': './data/mnist'
+}
 
-# sun397 = {
-#     'wrapper': SUN397,
-#     'batch_size': 128,
-#     'res': 224,
-#     'type': 'sun397',
-#     'num_workers': 8,
-#     'shuffle_train': True,
-#     'shuffle_test': False,
-#     'dir': './data/SUN397'
-# }
+svhn = {
+    'wrapper': SVHN,
+    'batch_size': 128,
+    'res': 224,
+    'type': 'svhn',
+    'num_workers': 8,
+    'shuffle_train': True,
+    'shuffle_test': False,
+    'dir': './data/svhn'
+}
 
-# gtsrb = {
-#     'wrapper': GTSRB,
-#     'batch_size': 128,
-#     'res': 224,
-#     'type': 'gtsrb',
-#     'num_workers': 8,
-#     'shuffle_train': True,
-#     'shuffle_test': False,
-#     'dir': './data/gtsrb'
-# }
+dtd = {
+    # 'wrapper': DTD,
+    'batch_size': 128,
+    'res': 224,
+    'type': 'dtd',
+    'num_workers': 8,
+    'shuffle_train': True,
+    'shuffle_test': False,
+    'dir': './data/dtd',
+}
 
-# resisc45 = {
-#     'wrapper': RESISC45,
-#     'batch_size': 128,
-#     'res': 224,
-#     'type': 'resisc45',
-#     'num_workers': 8,
-#     'shuffle_train': True,
-#     'shuffle_test': False,
-#     'dir': './data/resisc45'
-# }
+sun397 = {
+    # 'wrapper': SUN397,
+    'batch_size': 128,
+    'res': 224,
+    'type': 'sun397',
+    'num_workers': 8,
+    'shuffle_train': True,
+    'shuffle_test': False,
+    'dir': './data/SUN397'
+}
+
+gtsrb = {
+    'wrapper': GTSRB,
+    'batch_size': 128,
+    'res': 224,
+    'type': 'gtsrb',
+    'num_workers': 8,
+    'shuffle_train': True,
+    'shuffle_test': False,
+    'dir': './data/gtsrb'
+}
+
+resisc45 = {
+    # 'wrapper': RESISC45,
+    'batch_size': 128,
+    'res': 224,
+    'type': 'resisc45',
+    'num_workers': 8,
+    'shuffle_train': True,
+    'shuffle_test': False,
+    'dir': './data/resisc45'
+}
 
 snli = {
     'dir': './datasets/snli',
@@ -156,7 +158,6 @@ scitail = {
     'model_name_or_path' : "meta-llama/Meta-Llama-3-8B",
     'mask_class' : 2,
 }
-
 
 reddit_lifestyle_culture = {
     'type': 'pushshift_reddit',
