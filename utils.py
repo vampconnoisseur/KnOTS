@@ -377,7 +377,12 @@ def prepare_data(config, device='cuda'):
     data_config['device'] = device
     
     #NLI datasets
-    if data_config['type'] == 'snli':
+    if data_config['type'] == 'arxiv_multilabel':
+        from dataset.arxiv_multilabel import prepare_dataloaders
+        loaders = prepare_dataloaders(data_config)
+        train_loaders = loaders['train']
+        test_loaders = loaders['test']
+    elif data_config['type'] == 'snli':
         from dataset.snli import prepare_train_loaders, prepare_test_loaders
         train_loaders = prepare_train_loaders(data_config)
         test_loaders = prepare_test_loaders(data_config)
