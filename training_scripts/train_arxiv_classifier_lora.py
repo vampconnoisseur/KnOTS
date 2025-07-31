@@ -1,3 +1,18 @@
+"""
+Trains a LoRA adapter for multi-label classification on a specified ArXiv dataset.
+
+This script is designed to be run multiple times to train different specialist
+and baseline models. It is controlled by command-line arguments that specify
+which configuration to use and which dataset within that configuration to train on.
+
+Key functionalities include:
+- Loading a pre-trained language model (e.g., Llama 3).
+- Applying a LoRA configuration for parameter-efficient fine-tuning.
+- Calculating and applying class weights to handle dataset imbalance.
+- Splitting the training data on-the-fly into training and validation sets.
+- Evaluating the model periodically on the validation set using Macro F1-score.
+- Saving the best performing adapter checkpoint based on validation performance.
+"""
 import os
 import torch
 import argparse
@@ -16,6 +31,22 @@ from collections import Counter
 os.environ["TOKENIZERS_PARALLELISM"] = "true"
 
 def calculate_class_weights(csv_path, label_to_id, max_weight=500.0, min_weight=0.1):
+    """
+    Calculates positive class weights for BCEWithLogitsLoss based on label frequency.
+
+    This function reads a dataset CSV, counts the occurrences of each label,
+    and calculates weights to counteract class imbalance. Weights are capped
+    to ensure numerical stability during training.
+
+    Args:
+        csv_path (str): Path to the training data CSV file.
+        label_to_id (dict): Mapping from label name to its integer ID.
+        max_weight (float): The maximum (ceiling) value for any class weight.
+        min_weight (float): The minimum (floor) value for any class weight.
+
+    Returns:
+        torch.Tensor: A tensor of weights corresponding to each class ID.
+    """
     print(f"Calculating class weights from: {csv_path}")
     df = pd.read_csv(csv_path).dropna(subset=['categories'])
     num_labels = len(label_to_id)
@@ -51,6 +82,18 @@ def calculate_class_weights(csv_path, label_to_id, max_weight=500.0, min_weight=
 
 
 def evaluate_f1_score(model, dataloader, device, threshold=0.5):
+    """
+    Calculates Micro and Macro F1 scores for a multi-label classification model.
+
+    Args:
+        model (torch.nn.Module): The model to evaluate.
+        dataloader (DataLoader): The DataLoader for the evaluation set.
+        device (torch.device): The device to run evaluation on (e.g., 'cuda').
+        threshold (float): The probability threshold to classify a label as positive.
+
+    Returns:
+        tuple[float, float]: A tuple containing the micro_f1 and macro_f1 scores.
+    """
     model.eval()
     all_preds = []
     all_labels = []

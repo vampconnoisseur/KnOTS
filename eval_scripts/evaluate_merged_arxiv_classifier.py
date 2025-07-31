@@ -1,3 +1,18 @@
+"""
+Evaluates and compares merged ArXiv classifiers against specialists and baselines.
+
+This is the main script for running the final analysis. It performs a comprehensive
+evaluation by:
+1.  Loading the individual specialist adapters (CS, MATH) and evaluating their
+    performance on the curated inter-domain test set.
+2.  Loading the specialist adapters, merging them using various techniques
+    (e.g., TIES with SVD), merging their classification heads, and evaluating the
+    resulting generalist models.
+3.  Loading the baseline adapters (Combined, Union) and evaluating their
+    performance as a point of comparison.
+4.  Saving detailed prediction files (JSON) and summary metrics (F1 scores)
+    for each model to allow for in-depth qualitative and quantitative analysis.
+"""
 import os
 import torch
 import numpy as np
@@ -28,6 +43,25 @@ class StateDictModel(torch.nn.Module):
         return self._sd
 
 def evaluate_and_get_predictions(model, dataloader, device, id_to_label, threshold=0.5, top_k=5):
+    """
+    Performs a full evaluation of a model on a dataset.
+
+    Calculates Macro and Micro F1 scores and generates a detailed log of predictions,
+    including the raw text, true labels, and the model's top-k predicted labels
+    with their confidence scores.
+
+    Args:
+        model (torch.nn.Module): The model to evaluate.
+        dataloader (DataLoader): DataLoader for the evaluation set.
+        device (torch.device): The device to run evaluation on.
+        id_to_label (dict): Mapping from class ID to label name.
+        threshold (float): Probability threshold for binary classification.
+        top_k (int): Number of top predictions to save for qualitative analysis.
+
+    Returns:
+        tuple[dict, list]: A tuple containing a dictionary of scores and a list
+                           of detailed prediction dictionaries.
+    """
     model.to(device)
     model.eval()
     
@@ -80,9 +114,10 @@ def evaluate_and_get_predictions(model, dataloader, device, id_to_label, thresho
 
 
 def run_arxiv_evaluation():
+    """Main function to run the entire ArXiv evaluation pipeline."""
     CONFIG_NAME = 'arxiv_merge_config'
-    COMPUTE_TRANSFORM = True
-    HEADS_PATH = "arxiv_heads.pt"
+    COMPUTE_TRANSFORM = False
+
     SEED = 42
 
     set_seed(SEED)
@@ -90,7 +125,8 @@ def run_arxiv_evaluation():
 
     raw_config = get_config_from_name(CONFIG_NAME, device=device)
 
-    MODEL_DIR = "./lora_adapters_arxiv"
+    MODEL_DIR = raw_config['model_dir']
+    HEADS_PATH = raw_config['heads_path']
     
     tokenizer = transformers.AutoTokenizer.from_pretrained(raw_config['model']['name'])
     if tokenizer.pad_token is None: tokenizer.pad_token = tokenizer.eos_token
@@ -156,7 +192,7 @@ def run_arxiv_evaluation():
     print('='*50)
 
     print("Preparing experiment config (loading base LoRA models for merging)...")
-    config = prepare_experiment_config(raw_config)
+    config = prepare_experiment_config(raw_config, load_data=False)
 
     backbone_merge_config = config['task_merge_config']
     MergeClass = get_merge_handler(backbone_merge_config['representation'])

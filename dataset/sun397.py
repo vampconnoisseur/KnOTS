@@ -1,6 +1,7 @@
+import os
 import torch
-from datasets import load_dataset_builder, load_dataset
-from torch.utils.data import Dataset, DataLoader
+from torch.utils.data import Dataset, DataLoader, Subset
+from datasets import load_dataset
 
 class HFSun397Dataset(Dataset):
     def __init__(self, hf_split, transforms=None):
@@ -14,47 +15,62 @@ class HFSun397Dataset(Dataset):
         item = self.hf_split[idx]
         image = item['image'].convert("RGB")
         label = item['label']
+
         if self.transforms:
             image = self.transforms(image)
+
         return image, label
 
-def _load_and_get_splits(config):
-    full_dataset = load_dataset("tanganke/sun397", split="train", cache_dir=config.get('hf_cache_dir'))
-
-    main_split_dict = full_dataset.train_test_split(train_size=0.8, seed=42)
-    
-    final_test_split_dict = main_split_dict['test'].train_test_split(test_size=0.5, seed=42)
-
-    return {
-        'train': main_split_dict['train'],
-        'val': final_test_split_dict['train'],
-        'test': final_test_split_dict['test']
-    }
-
-
 def prepare_train_loaders(config):
-    splits = _load_and_get_splits(config)
-    train_dataset = HFSun397Dataset(hf_split=splits['train'], transforms=config['train_preprocess'])
+    cache_dir = config.get('hf_cache_dir') or config.get('cache_dir') or None
+    hf_train_split = load_dataset("tanganke/sun397", split="train", cache_dir=cache_dir)
+    
+    train_dataset = HFSun397Dataset(
+        hf_split=hf_train_split,
+        transforms=config['train_preprocess']
+    )
 
     loaders = {
-        'full': DataLoader(train_dataset, batch_size=config['batch_size'], shuffle=True, num_workers=config['num_workers'])
+        'full': DataLoader(
+            train_dataset,
+            batch_size=config['batch_size'],
+            shuffle=True,
+            num_workers=config['num_workers']
+        )
     }
     return loaders
 
 def prepare_test_loaders(config):
-    splits = _load_and_get_splits(config)
-    
-    val_dataset = HFSun397Dataset(hf_split=splits['val'], transforms=config['eval_preprocess'])
-    test_dataset = HFSun397Dataset(hf_split=splits['test'], transforms=config['eval_preprocess'])
+    cache_dir = config.get('hf_cache_dir') or config.get('cache_dir') or None
+    hf_full_test_split = load_dataset("tanganke/sun397", split="test", cache_dir=cache_dir)
 
-    loaders = {
-        'val': DataLoader(val_dataset, batch_size=config['batch_size'], shuffle=False, num_workers=config['num_workers']),
-        'test': DataLoader(test_dataset, batch_size=config['batch_size'], shuffle=False, num_workers=config['num_workers']),
-    }
+    loaders = {}
+    if config.get('val_fraction', 0) > 0.:
+        print('Splitting SUN397 for validation')
+        test_dataset_wrapped = HFSun397Dataset(hf_full_test_split, transforms=config['eval_preprocess'])
+        
+        shuffled_idxs_path = config['shuffled_idxs']
+        if not os.path.exists(shuffled_idxs_path):
+            print(f"Shuffled index file not found at {shuffled_idxs_path}. Creating it now...")
+            os.makedirs(os.path.dirname(shuffled_idxs_path), exist_ok=True)
+            indices = torch.randperm(len(test_dataset_wrapped))
+            torch.save(indices, shuffled_idxs_path)
+            print("Saved new shuffled indices.")
+            
+        shuffled_idxs = torch.load(shuffled_idxs_path)
+        shuffled_idxs = shuffled_idxs.tolist()
+        num_valid = int(len(test_dataset_wrapped) * config['val_fraction'])
+        valid_idxs, test_idxs = shuffled_idxs[:num_valid], shuffled_idxs[num_valid:]
+        
+        val_subset = Subset(test_dataset_wrapped, valid_idxs)
+        test_subset = Subset(test_dataset_wrapped, test_idxs)
+        
+        loaders['val'] = DataLoader(val_subset, batch_size=config['batch_size'], shuffle=False, num_workers=config['num_workers'])
+        loaders['test'] = DataLoader(test_subset, batch_size=config['batch_size'], shuffle=False, num_workers=config['num_workers'])
+    else:
+        test_dataset_wrapped = HFSun397Dataset(hf_full_test_split, transforms=config['eval_preprocess'])
+        loaders['test'] = DataLoader(test_dataset_wrapped, batch_size=config['batch_size'], shuffle=False, num_workers=config['num_workers'])
 
-    builder = load_dataset_builder("tanganke/sun397")
-    raw_classnames = builder.info.features['label'].names
-    final_classnames = [name[2:].replace('_', ' ') for name in raw_classnames]
-    loaders['class_names'] = final_classnames
+    loaders['class_names'] = hf_full_test_split.features['label'].names
     
     return loaders

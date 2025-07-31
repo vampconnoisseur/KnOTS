@@ -55,8 +55,8 @@ def run_BIG_function():
 
     order_of_processing_params = ['scaling_coeffs', 'topK']
     search_config = {
-        'scaling_coeffs': np.arange(0.1, 1.1, step=0.1),
-        'topK': np.arange(10, 101, step=10),
+        'scaling_coeffs': [0.1],
+        'topK': [100],
     }
     best_params_found = deepcopy(config['task_merge_config'])
 

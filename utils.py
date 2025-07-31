@@ -369,19 +369,13 @@ def prepare_data(config, device='cuda'):
     if isinstance(config, list):
         return [prepare_data(c, device) for c in config]
     
-    dataset_name = config['name']
-    
-    import dataset.configs as config_module
-    data_config = deepcopy(getattr(config_module, dataset_name))
-    data_config.update(config)
+    data_config = deepcopy(config)
     data_config['device'] = device
     
     #NLI datasets
     if data_config['type'] == 'arxiv_multilabel':
         from dataset.arxiv_multilabel import prepare_dataloaders
-        loaders = prepare_dataloaders(data_config)
-        train_loaders = loaders['train']
-        test_loaders = loaders['test']
+        return prepare_dataloaders(data_config)
     elif data_config['type'] == 'snli':
         from dataset.snli import prepare_train_loaders, prepare_test_loaders
         train_loaders = prepare_train_loaders(data_config)
@@ -457,13 +451,10 @@ def prepare_data(config, device='cuda'):
             f"No data loader found for dataset named '{name_str}' with type '{type_str}'"
         )
     
-    try:
-        return {
-            'train': train_loaders,
-            'test': test_loaders
-        }
-    except:
-        pdb.set_trace()
+    return {
+        'train': train_loaders,
+        'test': test_loaders
+    }
 
         
 def replace_sd_keys(sd, original, new):
@@ -496,37 +487,6 @@ def check_sd_almost_equal(base, desired, okay_set=None):
             else:
                 return False
     return True
-
-# def prepare_llama(config, device):
-#     """Load LLama models from config."""
-#     bases = []
-#     peft_config = LoraConfig(task_type=config["peft_config"]["task_type"],
-#                                 inference_mode=config["peft_config"]["inference_mode"],
-#                                 r=config["peft_config"]["r"],
-#                                 lora_alpha=config["peft_config"]["lora_alpha"],
-#                                 lora_dropout=config["peft_config"]["lora_dropout"],
-#                                 target_modules = config["peft_config"]["target_modules"],
-#                                 )
-#     model_name_or_path = config['name']
-#     ptm_model = AutoModelForSequenceClassification.from_pretrained(
-#                     model_name_or_path, return_dict=True, cache_dir=config['cachedir'], num_labels = 3)
-#     base_model = get_peft_model(ptm_model,peft_config)
-#     for idx, base_path in tqdm(enumerate(config['bases']), desc="Preparing Models", position=0, leave=True):
-#         if base_path.endswith('.pt'):
-#             base_model.load_state_dict(torch.load(base_path, map_location='cpu')) # Load fine-tuned model from local directory
-#         else: 
-#             base_model = PeftModel.from_pretrained(model = ptm_model, model_id = base_path) # Load model adapter from HF
-#         bases += [deepcopy(base_model)]
-#     # ptm_model_path = 'pretrained.pt' # load ptm_model from local directory
-#     # base_model.load_state_dict(torch.load(ptm_model_path, map_location='cpu'))
-#     ptm_model_path = 'hoffman-lab/KnOTS-Llama3_8B_lora_R16_pretrained_model'
-#     base_model = PeftModel.from_pretrained(model = ptm_model, model_id = ptm_model_path) # Load ptm_model from HF
-#     return {
-#         'bases': bases,
-#         'new': base_model
-#     }
-
-# In utils.py
 
 def prepare_llama(config, device):
     bases = []
@@ -679,7 +639,7 @@ def get_mask_fn(name):
     return masking_fns[name]
 
 
-def prepare_experiment_config(config, preloaded_data=None):
+def prepare_experiment_config(config, preloaded_data=None, load_data=True):
     models = prepare_models(config['model'], device=config['device'])
 
     if len(models['bases']) > 0 and hasattr(models['bases'][0], 'train_preprocess'):
@@ -696,14 +656,18 @@ def prepare_experiment_config(config, preloaded_data=None):
             config['dataset']['train_preprocess'] = models['bases'][0].train_preprocess
             config['dataset']['eval_preprocess'] = models['bases'][0].val_preprocess
 
-    if preloaded_data is None:
-        print("No preloaded data found, preparing data now...")
-        data = prepare_data(config['dataset'], device=config['device'])
+    data = None
+    if load_data:
+        if preloaded_data is None:
+            print("No preloaded data found, preparing data now...")
+            data = prepare_data(config['dataset'], device=config['device'])
+        else:
+            print("Using preloaded data.")
+            data = preloaded_data
     else:
-        print("Using preloaded data.")
-        data = preloaded_data
+        print("Skipping dataset loading as per 'load_data=False'.")
 
-    if config['eval_type'] == 'logits':
+    if config['eval_type'] == 'logits' and data:
         if isinstance(data, list):
             dataset = data[-1]
         else:
@@ -713,17 +677,18 @@ def prepare_experiment_config(config, preloaded_data=None):
             output_dim = len(dataset['test']['class_names'])
         else:
             output_dim = 1000
-        
     else:
-        output_dim = 512
+        output_dim = config['model'].get('num_labels', 512)
         
     config['model']['output_dim'] = output_dim
+    
     new_config = {
         'data': data,
         'models': models,
         'task_merge_config': config['task_merge_config'],
         'param_handler': prepare_param_handler(config['model'].get('ft_config', defaultdict()))
     }
+
     # Add outstanding elements
     for key in config:
         if key not in new_config:

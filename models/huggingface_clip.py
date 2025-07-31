@@ -9,8 +9,8 @@ from peft import get_peft_model, LoraConfig
 from collections import defaultdict
 
 
-CACHE_DIR = ""  # Set this to the directory where you want to cache the models
-MODEL_NAME = "" # Set this to the model name you want to use
+CACHE_DIR = "" 
+MODEL_NAME = ""
 
 class HFCLIPVisionModel(nn.Module):
     def __init__(
@@ -29,12 +29,10 @@ class HFCLIPVisionModel(nn.Module):
         self.train_preprocess = lambda x: processor.image_processor(x, return_tensors='pt')
         self.val_preprocess = lambda x: processor.image_processor(x, return_tensors='pt')
         
-        # THIS IS VERY IMPORTANT TO PASS THROUGH FOR HF ADAPTERS
         self.config = model.config
         self.vision_head.weight.requires_grad = False
     
     def forward(self, x):
-        # If we have a buggy return from processors, fix it
         if len(x['pixel_values'].shape) == 5:
             x['pixel_values'] = x['pixel_values'].squeeze(1)
             
@@ -55,19 +53,15 @@ class HFLoRACLIPVisionModel(nn.Module):
         model = CLIPModel.from_pretrained(model_name, cache_dir=cache_dir)
         valid_args = list(LoraConfig.__dict__.keys())
         lora_config = LoraConfig(**{k: v for k,v in lora_config.items() if k in valid_args})
-        model.vision_model = get_peft_model(model.vision_model, lora_config).to(device)
-        self.vision_model = deepcopy(model.vision_model)
+        self.vision_model = get_peft_model(model.vision_model, lora_config).to(device)
         self.vision_head = model.visual_projection.to(device)
         self.vision_head.weight.requires_grad = False
-        # Set Processing
         processor = CLIPProcessor.from_pretrained(model_name, cache_dir=cache_dir)
         self.train_preprocess = lambda x: processor.image_processor(x, return_tensors='pt')
         self.val_preprocess = lambda x: processor.image_processor(x, return_tensors='pt')
-        # Run model without adapters
         self.disable_adapters = False
     
     def forward(self, x):
-        # If we have a buggy return from processors, fix it
         if isinstance(x, torch.Tensor):
             x = {'pixel_values': x}
         if len(x['pixel_values'].shape) == 5:
@@ -87,6 +81,9 @@ class HFLoRACLIPVisionModel(nn.Module):
             new_key = key.replace(original, new)
             new_sd[new_key] =  val
         return new_sd
+    
+    def save_pretrained(self, save_path):
+        self.vision_model.save_pretrained(save_path)
     
     def get_base_model(self):
         self.model.vision_model = self.model.vision_model.get_base_model()

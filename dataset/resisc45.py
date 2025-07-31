@@ -1,20 +1,9 @@
+import os
 import torch
+from torch.utils.data import Dataset, DataLoader, Subset
 from datasets import load_dataset
-from torch.utils.data import Dataset, DataLoader
 
-CLASSES = [
-    "airplane", "airport", "baseball_diamond", "basketball_court", "beach", "bridge",
-    "chaparral", "church", "circular_farmland", "cloud", "commercial_area",
-    "dense_residential", "desert", "forest", "freeway", "golf_course",
-    "ground_track_field", "harbor", "industrial_area", "intersection", "island",
-    "lake", "meadow", "medium_residential", "mobile_home_park", "mountain",
-    "overpass", "palace", "parking_lot", "railway", "railway_station",
-    "rectangular_farmland", "river", "roundabout", "runway", "sea_ice", "ship",
-    "snowberg", "sparse_residential", "stadium", "storage_tank", "tennis_court",
-    "terrace", "thermal_power_station", "wetland",
-]
-
-class HFDataset(Dataset):
+class HFResisc45Dataset(Dataset):
     def __init__(self, hf_split, transforms=None):
         self.hf_split = hf_split
         self.transforms = transforms
@@ -33,9 +22,10 @@ class HFDataset(Dataset):
         return image, label
 
 def prepare_train_loaders(config):
-    hf_train_split = load_dataset("tanganke/resisc45", split="train", cache_dir=config.get('hf_cache_dir'))
+    cache_dir = config.get('hf_cache_dir') or config.get('cache_dir') or None
+    hf_train_split = load_dataset("tanganke/resisc45", split="train", cache_dir=cache_dir)
     
-    train_dataset = HFDataset(
+    train_dataset = HFResisc45Dataset(
         hf_split=hf_train_split,
         transforms=config['train_preprocess']
     )
@@ -51,36 +41,36 @@ def prepare_train_loaders(config):
     return loaders
 
 def prepare_test_loaders(config):
-    hf_full_test_split = load_dataset("tanganke/resisc45", split="test", cache_dir=config.get('hf_cache_dir'))
-    
-    split_dict = hf_full_test_split.train_test_split(test_size=0.5, seed=42)
-    hf_val_split = split_dict['train']
-    hf_test_split = split_dict['test']
+    cache_dir = config.get('hf_cache_dir') or config.get('cache_dir') or None
+    hf_full_test_split = load_dataset("tanganke/resisc45", split="test", cache_dir=cache_dir)
 
-    val_dataset = HFDataset(
-        hf_split=hf_val_split,
-        transforms=config['eval_preprocess']
-    )
-    test_dataset = HFDataset(
-        hf_split=hf_test_split,
-        transforms=config['eval_preprocess']
-    )
+    loaders = {}
+    if config.get('val_fraction', 0) > 0.:
+        print('Splitting RESISC45 for validation')
+        test_dataset_wrapped = HFResisc45Dataset(hf_full_test_split, transforms=config['eval_preprocess'])
+        
+        shuffled_idxs_path = config['shuffled_idxs']
+        if not os.path.exists(shuffled_idxs_path):
+            print(f"Shuffled index file not found at {shuffled_idxs_path}. Creating it now...")
+            os.makedirs(os.path.dirname(shuffled_idxs_path), exist_ok=True)
+            indices = torch.randperm(len(test_dataset_wrapped))
+            torch.save(indices, shuffled_idxs_path)
+            print("Saved new shuffled indices.")
+            
+        shuffled_idxs = torch.load(shuffled_idxs_path)
+        shuffled_idxs = shuffled_idxs.tolist()
+        num_valid = int(len(test_dataset_wrapped) * config['val_fraction'])
+        valid_idxs, test_idxs = shuffled_idxs[:num_valid], shuffled_idxs[num_valid:]
+        
+        val_subset = Subset(test_dataset_wrapped, valid_idxs)
+        test_subset = Subset(test_dataset_wrapped, test_idxs)
+        
+        loaders['val'] = DataLoader(val_subset, batch_size=config['batch_size'], shuffle=False, num_workers=config['num_workers'])
+        loaders['test'] = DataLoader(test_subset, batch_size=config['batch_size'], shuffle=False, num_workers=config['num_workers'])
+    else:
+        test_dataset_wrapped = HFResisc45Dataset(hf_full_test_split, transforms=config['eval_preprocess'])
+        loaders['test'] = DataLoader(test_dataset_wrapped, batch_size=config['batch_size'], shuffle=False, num_workers=config['num_workers'])
 
-    loaders = {
-        'val': DataLoader(
-            val_dataset,
-            batch_size=config['batch_size'],
-            shuffle=False,
-            num_workers=config['num_workers']
-        ),
-        'test': DataLoader(
-            test_dataset,
-            batch_size=config['batch_size'],
-            shuffle=False,
-            num_workers=config['num_workers']
-        ),
-    }
-
-    loaders['class_names'] = [' '.join(c.split('_')) for c in CLASSES]
+    loaders['class_names'] = hf_full_test_split.features['label'].names
     
     return loaders

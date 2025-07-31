@@ -203,7 +203,7 @@ if __name__ == "__main__":
     # VIT_PATH = "openai/clip-vit-base-patch32"   
     CACHE_DIR = '.'                                      # Path to cache directory 
     MODEL_SAVE_DIR = '.'                                # Path to save the model
-    CONFIG_NAME = '8vision_train'                       # Training config file name
+    CONFIG_NAME = 'vitL_r16_knots_ties'                       # Training config file name
     #Update the training config here or in config file
     training_config={
     # 'epochs' : 10000,

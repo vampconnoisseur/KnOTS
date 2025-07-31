@@ -63,7 +63,7 @@ def grab_nli_dataset_configs(name):
 #----------------- Edit from here -----------------#
 PTM_MODEL_PATH = ""                                                     # Path to the pre-trained model checkpoint
 CACHE_DIR = ""                                                          # Path to the cache directory
-MODEL_SAVE_DIR = ""                                                     # Directory to save the model
+MODEL_SAVE_DIR = "./lora_adaptors_nli"                                                     # Directory to save the model
 MAX_NUM_EPOCHS = 0                                                      # Maximum number of epochs
 MAX_STEPS = 0                                                           # Max steps for training
 EVAL_AFTER_STEPS = 4000                                                 # Evaluate model after these many steps
@@ -76,7 +76,7 @@ NUM_WORKERS = 1                                                         # Number
 
 DATASET_CONFIG['batch_size'] = BATCH_SIZE
 DATASET_CONFIG['num_workers'] = NUM_WORKERS
-MODEL_NAME_OR_PATH = "meta-llama/Meta-Llama-3-8B"
+MODEL_NAME_OR_PATH = "meta-llama/Llama-3.2-3B"
 DEVICE = 'cuda' if torch.cuda.is_available() else 'cpu'
 #__________________________________________________#
 
@@ -144,8 +144,17 @@ for epoch in range(MAX_NUM_EPOCHS):
             model.eval()
             acc = evaluate_logits(model, val_dataloader, DEVICE, mask_class = mask_class)
             print(f"epoch {epoch} val acc :", acc)
-            model_save_path = os.path.join(MODEL_SAVE_DIR, TASK+"weighted_loss"+str(total_steps)+'.pt')
-            torch.save(model.state_dict(), model_save_path)
+
+            # If you want to save the entire model's state dict, then uncomment the below two lines
+
+            # model_save_path = os.path.join(MODEL_SAVE_DIR, TASK+"weighted_loss"+str(total_steps)+'.pt')
+            # torch.save(model.state_dict(), model_save_path)
+
+            # If you just want to save the lora adaptors for each model then use the below two lines and comment above two
+
+            adapter_save_path = os.path.join(MODEL_SAVE_DIR, TASK)
+            model.save_pretrained(adapter_save_path)
+
         if total_steps >= MAX_STEPS:
             break
     model.eval()

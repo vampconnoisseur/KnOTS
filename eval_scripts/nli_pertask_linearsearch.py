@@ -21,7 +21,7 @@ login(token=token)
 
 def run_BIG_function():
     CONFIG_NAME = 'llama8B_r16_knots_ties'
-    TASK_HEADS_PATH = "heads.pt"
+    TASK_HEADS_PATH = "nli_heads.pt"
     COMPUTE_TRANSFORM = True
     EVAL_SPLIT = 'val'
     EVAL_TEST = True
@@ -166,7 +166,6 @@ def run_BIG_function():
             default_params[param] = best_val_results[param]
 
         if (EVAL_TEST == True):
-            # Evaluate on the test set with the best topK and scaling co-efficient
             print("Best params :", best_val_results)
             for key in search_config.keys():
                 instance_params.update({key : best_val_results[key]})

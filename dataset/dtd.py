@@ -1,6 +1,7 @@
+import os
 import torch
+from torch.utils.data import Dataset, DataLoader, Subset
 from datasets import load_dataset
-from torch.utils.data import Dataset, DataLoader
 
 class HFDtdDataset(Dataset):
     def __init__(self, hf_split, transforms=None):
@@ -21,7 +22,8 @@ class HFDtdDataset(Dataset):
         return image, label
 
 def prepare_train_loaders(config):
-    hf_train_split = load_dataset("tanganke/dtd", split="train", cache_dir=config.get('hf_cache_dir'))
+    cache_dir = config.get('hf_cache_dir') or config.get('cache_dir') or None
+    hf_train_split = load_dataset("tanganke/dtd", split="train", cache_dir=cache_dir)
     
     train_dataset = HFDtdDataset(
         hf_split=hf_train_split,
@@ -39,39 +41,36 @@ def prepare_train_loaders(config):
     return loaders
 
 def prepare_test_loaders(config):
-    hf_full_test_split = load_dataset("tanganke/dtd", split="test", cache_dir=config.get('hf_cache_dir'))
-    
-    split_dict = hf_full_test_split.train_test_split(test_size=0.75, seed=42)
-    hf_val_split = split_dict['train']
-    hf_test_split = split_dict['test']
+    cache_dir = config.get('hf_cache_dir') or config.get('cache_dir') or None
+    hf_full_test_split = load_dataset("tanganke/dtd", split="test", cache_dir=cache_dir)
 
-    val_dataset = HFDtdDataset(
-        hf_split=hf_val_split,
-        transforms=config['eval_preprocess']
-    )
-    test_dataset = HFDtdDataset(
-        hf_split=hf_test_split,
-        transforms=config['eval_preprocess']
-    )
+    loaders = {}
+    if config.get('val_fraction', 0) > 0.:
+        print('Splitting DTD for validation')
+        test_dataset_wrapped = HFDtdDataset(hf_full_test_split, transforms=config['eval_preprocess'])
+        
+        shuffled_idxs_path = config['shuffled_idxs']
+        if not os.path.exists(shuffled_idxs_path):
+            print(f"Shuffled index file not found at {shuffled_idxs_path}. Creating it now...")
+            os.makedirs(os.path.dirname(shuffled_idxs_path), exist_ok=True)
+            indices = torch.randperm(len(test_dataset_wrapped))
+            torch.save(indices, shuffled_idxs_path)
+            print("Saved new shuffled indices.")
+            
+        shuffled_idxs = torch.load(shuffled_idxs_path)
+        shuffled_idxs = shuffled_idxs.tolist()
+        num_valid = int(len(test_dataset_wrapped) * config['val_fraction'])
+        valid_idxs, test_idxs = shuffled_idxs[:num_valid], shuffled_idxs[num_valid:]
+        
+        val_subset = Subset(test_dataset_wrapped, valid_idxs)
+        test_subset = Subset(test_dataset_wrapped, test_idxs)
+        
+        loaders['val'] = DataLoader(val_subset, batch_size=config['batch_size'], shuffle=False, num_workers=config['num_workers'])
+        loaders['test'] = DataLoader(test_subset, batch_size=config['batch_size'], shuffle=False, num_workers=config['num_workers'])
+    else:
+        test_dataset_wrapped = HFDtdDataset(hf_full_test_split, transforms=config['eval_preprocess'])
+        loaders['test'] = DataLoader(test_dataset_wrapped, batch_size=config['batch_size'], shuffle=False, num_workers=config['num_workers'])
 
-    loaders = {
-        'val': DataLoader(
-            val_dataset,
-            batch_size=config['batch_size'],
-            shuffle=False,
-            num_workers=config['num_workers']
-        ),
-        'test': DataLoader(
-            test_dataset,
-            batch_size=config['batch_size'],
-            shuffle=False,
-            num_workers=config['num_workers']
-        ),
-    }
-
-    classnames = load_dataset("tanganke/dtd", split="train").features['label'].names
-    final_classnames = [name.replace('_', ' ') for name in classnames]
-    
-    loaders['class_names'] = final_classnames
+    loaders['class_names'] = hf_full_test_split.features['label'].names
     
     return loaders

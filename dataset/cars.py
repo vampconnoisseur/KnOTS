@@ -1,8 +1,12 @@
+import os
 import torch
-from datasets import load_dataset_builder, load_dataset
-from torch.utils.data import Dataset, DataLoader
+from torch.utils.data import Dataset, DataLoader, Subset
+from datasets import load_dataset
+
+ROOT = "" 
 
 class HFCarsDataset(Dataset):
+    """A wrapper for the Hugging Face Stanford Cars dataset."""
     def __init__(self, hf_split, transforms=None):
         self.hf_split = hf_split
         self.transforms = transforms
@@ -12,7 +16,7 @@ class HFCarsDataset(Dataset):
 
     def __getitem__(self, idx):
         item = self.hf_split[idx]
-        image = item['image'].convert("RGB") 
+        image = item['image'].convert("RGB")
         label = item['label']
 
         if self.transforms:
@@ -21,7 +25,10 @@ class HFCarsDataset(Dataset):
         return image, label
 
 def prepare_train_loaders(config):
-    hf_train_split = load_dataset("tanganke/stanford_cars", split="train", cache_dir=config.get('hf_cache_dir'))
+    """
+    Prepares the training loader for the Stanford Cars dataset from Hugging Face.
+    """
+    hf_train_split = load_dataset("tanganke/stanford_cars", split="train", cache_dir=config.get('cache_dir'))
     
     train_dataset = HFCarsDataset(
         hf_split=hf_train_split,
@@ -39,37 +46,45 @@ def prepare_train_loaders(config):
     return loaders
 
 def prepare_test_loaders(config):
-    hf_full_test_split = load_dataset("tanganke/stanford_cars", split="test", cache_dir=config.get('hf_cache_dir'))
-    
-    split_dict = hf_full_test_split.train_test_split(test_size=0.8, seed=42)
-    hf_val_split = split_dict['train'] 
-    hf_test_split = split_dict['test'] 
+    """
+    Prepares the test and validation loaders for the Stanford Cars dataset from Hugging Face.
+    """
+    hf_full_test_split = load_dataset("tanganke/stanford_cars", split="test", cache_dir=config.get('cache_dir'))
 
-    val_dataset = HFCarsDataset(
-        hf_split=hf_val_split,
-        transforms=config['eval_preprocess']
-    )
-    test_dataset = HFCarsDataset(
-        hf_split=hf_test_split,
-        transforms=config['eval_preprocess']
-    )
-
-    loaders = {
-        'val': DataLoader(
-            val_dataset,
+    loaders = {}
+    if config.get('val_fraction', 0) > 0.:
+        print('Splitting Stanford Cars for validation')
+        test_dataset_wrapped = HFCarsDataset(hf_full_test_split, transforms=config['eval_preprocess'])
+        
+        shuffled_idxs = torch.load(config['shuffled_idxs'])
+        shuffled_idxs = shuffled_idxs.tolist()
+        num_valid = int(len(test_dataset_wrapped) * config['val_fraction'])
+        valid_idxs, test_idxs = shuffled_idxs[:num_valid], shuffled_idxs[num_valid:]
+        
+        val_subset = Subset(test_dataset_wrapped, valid_idxs)
+        test_subset = Subset(test_dataset_wrapped, test_idxs)
+        
+        loaders['val'] = DataLoader(
+            val_subset,
             batch_size=config['batch_size'],
             shuffle=False,
             num_workers=config['num_workers']
-        ),
-        'test': DataLoader(
-            test_dataset,
+        )
+        loaders['test'] = DataLoader(
+            test_subset,
             batch_size=config['batch_size'],
             shuffle=False,
             num_workers=config['num_workers']
-        ),
-    }
+        )
+    else:
+        test_dataset_wrapped = HFCarsDataset(hf_full_test_split, transforms=config['eval_preprocess'])
+        loaders['test'] = DataLoader(
+            test_dataset_wrapped,
+            batch_size=config['batch_size'],
+            shuffle=False,
+            num_workers=config['num_workers']
+        )
 
-    builder = load_dataset_builder("tanganke/stanford_cars")
-    loaders['class_names'] = builder.info.features['label'].names
+    loaders['class_names'] = hf_full_test_split.features['label'].names
     
     return loaders

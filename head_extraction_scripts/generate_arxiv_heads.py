@@ -1,3 +1,14 @@
+"""
+Extracts the classification head weights from trained ArXiv LoRA adapters.
+
+This script iterates through a predefined set of trained specialist adapters,
+loads each one onto a base model, and saves the state dictionary of the
+classification layer ('score' layer).
+
+The resulting heads are saved as a single dictionary in a .pt file, which can
+then be used by the evaluation script for merging experiments (e.g., averaging
+or SVD merge of the heads).
+"""
 import torch
 from peft import PeftModel
 from transformers import AutoModelForSequenceClassification
@@ -5,14 +16,21 @@ import os
 
 from configs.arxiv_classification_shared import NUM_LABELS
 
+CWD = os.getcwd()
+MODEL_DIR = os.path.join(CWD, "lora_adapters_arxiv")
+HEADS_DIR = os.path.join(CWD, "head_layers")
+
 ADAPTER_PATHS = {
-    "arxiv_cs": "./lora_adapters_arxiv/arxiv_cs_lora",
-    "arxiv_math": "./lora_adapters_arxiv/arxiv_math_lora",
+    "arxiv_cs": os.path.join(MODEL_DIR, "arxiv_cs_lora"),
+    "arxiv_math": os.path.join(MODEL_DIR, "arxiv_math_lora"),
 }
+
 BASE_MODEL_NAME = 'meta-llama/Llama-3.2-3B' 
-SAVE_PATH = "arxiv_heads.pt"
+SAVE_PATH = os.path.join(HEADS_DIR, "arxiv_heads.pt")
 
 if __name__ == "__main__":
+    os.makedirs(DATA_DIR, exist_ok=True)
+
     print(f"Loading base model: {BASE_MODEL_NAME}")
     base_model = AutoModelForSequenceClassification.from_pretrained(
         BASE_MODEL_NAME, 

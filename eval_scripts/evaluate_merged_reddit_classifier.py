@@ -1,3 +1,17 @@
+"""
+Evaluates merged and specialist LoRA models on a curated Reddit dataset.
+
+This script performs a comprehensive evaluation by:
+1. Loading specialist LoRA adapters that have been individually fine-tuned.
+2. Merging the backbones of these adapters using a specified merge strategy (e.g., TIES).
+3. Merging the classification heads using both SVD and simple averaging.
+4. Evaluating the merged backbones combined with the merged heads.
+5. Evaluating the original, unmodified specialist adapters as a baseline.
+6. Evaluating a single adapter trained on a mixture of all domains as another baseline.
+
+Performance is measured using top-k accuracy on a curated, dual-label dataset,
+and detailed prediction outputs are saved to a .jsonl file.
+"""
 import os
 import torch
 import numpy as np
@@ -7,6 +21,8 @@ from huggingface_hub import login
 from copy import deepcopy
 from collections import OrderedDict
 from peft import PeftModel
+import json
+import torch.nn.functional as F
 
 from utils import get_config_from_name, prepare_experiment_config, write_to_csv, set_seed
 from task_merger import get_merge_handler
@@ -19,7 +35,7 @@ from configs.reddit_classification_shared import (
 os.environ["TOKENIZERS_PARALLELISM"] = "true"
 transformers.utils.logging.set_verbosity(transformers.logging.ERROR)
 
-TOP_K=5
+TOP_K = 5
 
 try:
     token = os.getenv('HUGGINGFACE_TOKEN')
@@ -34,12 +50,35 @@ class StateDictModel(torch.nn.Module):
     def state_dict(self):
         return self._sd
 
-def evaluate_dual_label_accuracy(model, loader, device, top_k=TOP_K):
+def evaluate_dual_label_accuracy(model, loader, device, tokenizer, id_to_subreddit_map, output_file_path=None, top_k=TOP_K):
+    """
+    Evaluates a model's top-k accuracy on a dataset with multi-hot labels.
+
+    A prediction is considered correct if any of the model's top-k predicted
+    classes intersect with the set of true labels for a given sample.
+
+    Args:
+        model (torch.nn.Module): The model to evaluate.
+        loader (torch.utils.data.DataLoader): DataLoader for the evaluation data.
+        device (torch.device): The device to run evaluation on.
+        tokenizer (transformers.PreTrainedTokenizer): Tokenizer for decoding text.
+        id_to_subreddit_map (dict): Mapping from class ID to subreddit name.
+        output_file_path (str, optional): Path to save detailed predictions.
+        top_k (int, optional): The number of top predictions to consider.
+
+    Returns:
+        float: The top-k dual-label accuracy as a percentage.
+    """
     model.to(device)
     model.eval()
 
     correct_predictions = 0
     total_samples = 0
+    
+    output_file = None
+    if output_file_path:
+        os.makedirs(os.path.dirname(output_file_path), exist_ok=True)
+        output_file = open(output_file_path, 'w', encoding='utf-8')
 
     with torch.no_grad():
         for batch in tqdm(loader, desc=f"Evaluating Top-{top_k} Dual-Label Accuracy", leave=False):
@@ -56,25 +95,53 @@ def evaluate_dual_label_accuracy(model, loader, device, top_k=TOP_K):
                 true_indices_tensor = torch.where(multi_hot_labels[i] == 1)[0]
                 true_indices_set = set(true_indices_tensor.cpu().numpy())
                 
-                if true_indices_set.issubset(predicted_indices_set):
+                if len(true_indices_set.intersection(predicted_indices_set)) > 0:
                     correct_predictions += 1
-            
+
+                if output_file:
+                    probabilities = F.softmax(outputs.logits[i], dim=-1)
+                    sorted_probs, sorted_indices = torch.sort(probabilities, descending=True)
+                    
+                    sorted_predictions = [
+                        {"subreddit": id_to_subreddit_map[idx.item()], "probability": f"{prob.item():.4f}"}
+                        for idx, prob in zip(sorted_indices, sorted_probs)
+                    ]
+                    
+                    true_subreddits = [id_to_subreddit_map[idx.item()] for idx in true_indices_tensor]
+                    
+                    input_text = tokenizer.decode(inputs['input_ids'][i], skip_special_tokens=True)
+
+                    sample_data = {
+                        "text": input_text,
+                        "true_subreddits": true_subreddits,
+                        "predictions": sorted_predictions
+                    }
+                    output_file.write(json.dumps(sample_data) + '\n')
+
             total_samples += len(inputs['input_ids'])
+
+    if output_file:
+        output_file.close()
+        print(f"Saved detailed predictions to {output_file_path}")
 
     if total_samples == 0: return 0.0
     return (correct_predictions / total_samples) * 100
 
 
 def run_reddit_evaluation():
+    """
+    Main function to orchestrate the entire Reddit model evaluation pipeline.
+    """
     CONFIG_NAME = 'reddit_merge_classification_config'
-    COMPUTE_TRANSFORM = False
-    HEADS_PATH = "reddit_heads_2_tasks.pt"
-    
+    COMPUTE_TRANSFORM = True
     SEED = 123
     set_seed(SEED)
     device = 'cuda' if torch.cuda.is_available() else 'cpu'
-
     raw_config = get_config_from_name(CONFIG_NAME, device=device)
+    PREDICTIONS_SAVE_PATH = "./predictions_reddit/merged_model_predictions.jsonl"
+
+    MODEL_DIR = raw_config['model_dir']
+    HEADS_PATH = raw_config['heads_path']
 
     tokenizer = transformers.AutoTokenizer.from_pretrained(raw_config['model']['name'])
     if tokenizer.pad_token is None: tokenizer.pad_token = tokenizer.eos_token
@@ -87,8 +154,8 @@ def run_reddit_evaluation():
         d_config['subreddit_to_id'] = subreddit_to_id
         d_config['num_workers'] = 0
 
-    print("Preparing experiment config (loading base models)...")
-    config = prepare_experiment_config(raw_config)
+    print("Preparing experiment config (loading base LoRA models for merging)...")
+    config = prepare_experiment_config(raw_config, load_data=False) 
 
     print("Preparing curated dual-label evaluation loader...")
     curated_eval_config = raw_config['curated_eval_dataset']
@@ -104,7 +171,18 @@ def run_reddit_evaluation():
     os.makedirs(os.path.dirname(csv_file), exist_ok=True)
     print(f'Saving results to {csv_file}')
 
-    def merge_and_eval(BackboneMerge, svd_merged_head_sd, avg_merged_head_sd, individual_heads_sd):
+    def merge_and_eval(BackboneMerge, svd_merged_head_sd, avg_merged_head_sd):
+        """
+        Merges model backbones and evaluates them with different merged heads.
+
+        Args:
+            BackboneMerge (TaskMerger): The merge handler for the model backbones.
+            svd_merged_head_sd (dict): The state dict of the SVD-merged head.
+            avg_merged_head_sd (dict): The state dict of the averaged head.
+
+        Returns:
+            dict: A dictionary containing the evaluation results.
+        """
         instance_params = raw_config['task_merge_config']
         all_results = instance_params.copy()
 
@@ -122,9 +200,18 @@ def run_reddit_evaluation():
             print(f"\n  Injecting '{head_name}' head for evaluation...")
             merged_model.score.load_state_dict(head_sd, strict=True)
             
+            predictions_path = PREDICTIONS_SAVE_PATH.replace('.jsonl', f'_{head_name}.jsonl')
+            
             dual_label_accuracy = evaluate_dual_label_accuracy(
-                merged_model, curated_loader, device, top_k=TOP_K
+                model=merged_model, 
+                loader=curated_loader, 
+                device=device,
+                tokenizer=tokenizer,
+                id_to_subreddit_map=ID_TO_SUBREDDIT,
+                output_file_path=predictions_path,
+                top_k=TOP_K
             )
+            
             print(f"  > Top-{TOP_K} Dual-Label Accuracy (with {head_name} Head): {dual_label_accuracy:.2f}%")
             all_results[f'top-{TOP_K}_dual_label_accuracy_{head_name}_head'] = dual_label_accuracy
 
@@ -192,26 +279,53 @@ def run_reddit_evaluation():
         final_avg_head_sd['modules_to_save.default.weight'] = averaged_trainable_weight
         print("Averaged head calculation complete.")
         
-        final_results = merge_and_eval(BackboneMerge, final_svd_head_sd, final_avg_head_sd, task_heads)
+        final_results = merge_and_eval(BackboneMerge, final_svd_head_sd, final_avg_head_sd)
         print("\n--- Final Results ---")
         print(final_results)
 
-        print('\n' + '-'*20)
-        print("--- Evaluating Single Adapter Trained on Mixed Data ---")
-        print('-'*20)
+        specialist_results = {}
 
-        MODEL_DIR = "./lora_rank16_mixed_ft"
+        for i, adapter_path in enumerate(raw_config['model']['bases']):
+            specialist_model = config['models']['bases'][i]
+            adapter_name = os.path.basename(adapter_path)
+            
+            print(f"\n--- Evaluating Specialist: {adapter_name} ---")
+            
+            specialist_predictions_path = PREDICTIONS_SAVE_PATH.replace('.jsonl', f'_{adapter_name}.jsonl')
+            
+            specialist_accuracy = evaluate_dual_label_accuracy(
+                model=specialist_model,
+                loader=curated_loader,
+                device=device,
+                tokenizer=tokenizer,
+                id_to_subreddit_map=ID_TO_SUBREDDIT,
+                output_file_path=specialist_predictions_path,
+                top_k=TOP_K
+            )
+            print(f"  > Top-{TOP_K} Dual-Label Accuracy ({adapter_name}): {specialist_accuracy:.2f}%")
+            specialist_results[adapter_name] = specialist_accuracy
+        
+        print("\n--- Summary of Specialist Adapter Results ---")
+        print(specialist_results)
+
         mixed_adapter_name = "reddit_mixed_culture_lora"
         mixed_adapter_path = os.path.join(MODEL_DIR, mixed_adapter_name)
 
-            
         base_model = config['models']['new']
         model_with_mixed_adapter = PeftModel.from_pretrained(base_model.base_model, mixed_adapter_path)
         
         print(f"\n--- Evaluating Mixed Adapter on Curated Dual-Label Task ---")
         
+        mixed_adapter_predictions_path = PREDICTIONS_SAVE_PATH.replace('.jsonl', '_mixed_adapter.jsonl')
+        
         mixed_adapter_accuracy = evaluate_dual_label_accuracy(
-            model_with_mixed_adapter, curated_loader, device, top_k=TOP_K
+            model=model_with_mixed_adapter, 
+            loader=curated_loader, 
+            device=device,
+            tokenizer=tokenizer,
+            id_to_subreddit_map=ID_TO_SUBREDDIT,
+            output_file_path=mixed_adapter_predictions_path,
+            top_k=TOP_K
         )
 
         print(f"  > Top-{TOP_K} Dual-Label Accuracy (Single Mixed Adapter): {mixed_adapter_accuracy:.2f}%")

@@ -1,11 +1,18 @@
+"""
+Fine-tunes a Transformers sequence classification model using Low-Rank Adaptation (LoRA).
+
+This script is designed to take a specific dataset configuration from a shared config file,
+load a pre-trained language model, apply a LoRA configuration, and fine-tune it on the
+specified Reddit dataset. The best performing adapter, based on validation accuracy, is saved.
+"""
 import os
 import torch
 import argparse
 import itertools
-import numpy as np
 from peft import get_peft_model, LoraConfig
 from transformers import AutoModelForSequenceClassification, AutoTokenizer, get_linear_schedule_with_warmup
 from tqdm.auto import tqdm
+import numpy as np
 from huggingface_hub import login
 
 from utils import get_config_from_name
@@ -20,6 +27,17 @@ import transformers
 transformers.utils.logging.set_verbosity(transformers.logging.ERROR)
 
 def evaluate_accuracy(model, dataloader, device):
+    """
+    Calculates the classification accuracy of a model on a given dataset.
+
+    Args:
+        model (torch.nn.Module): The sequence classification model to evaluate.
+        dataloader (torch.utils.data.DataLoader): The DataLoader for the evaluation data.
+        device (torch.device): The device (CPU or CUDA) to run the evaluation on.
+
+    Returns:
+        float: The accuracy of the model, as a value between 0.0 and 1.0.
+    """
     model.eval()
     all_preds = []
     all_labels = []
@@ -36,23 +54,25 @@ def evaluate_accuracy(model, dataloader, device):
     return np.mean(np.array(all_preds) == np.array(all_labels))
 
 if __name__ == "__main__":
-    parser = argparse.ArgumentParser(description="Fine-tune a Sequence Classification LM with LoRA.")
-    parser.add_argument('--config_name', type=str, required=True, help="Name of the classification config file.")
-    parser.add_argument('--model_save_dir', type=str, default="./lora_rank16_2_tasks", help="Dir to save trained adapters.")
+    parser = argparse.ArgumentParser(description="Fine-tune a Sequence Classification LM with LoRA on Reddit.")
+    parser.add_argument('--config_name', type=str, default='reddit_merge_classification_config', help="Name of the classification config file.")
+    parser.add_argument('--task_index', type=int, required=True, help="Index of the dataset config to use.")
     parser.add_argument('--max_steps', type=int, default=15000, help="Total training steps.")
     parser.add_argument('--eval_every', type=int, default=2000, help="Evaluate every N steps.")
     parser.add_argument('--lr', type=float, default=2e-5, help="Learning rate.")
     args = parser.parse_args()
 
-    print(f"Loading config: {args.config_name}")
     config = get_config_from_name(args.config_name)
-    dataset_config = config['dataset'][0]
+    dataset_config = config['dataset'][args.task_index]
     model_config = config['model']
+    MODEL_SAVE_DIR = config['model_dir']
+    os.makedirs(MODEL_SAVE_DIR, exist_ok=True)
+
     TASK_NAME = dataset_config['name']
     DEVICE = 'cuda' if torch.cuda.is_available() else 'cpu'
 
     print("Loading tokenizer...")
-    tokenizer = AutoTokenizer.from_pretrained(model_config['base_type'], cache_dir=model_config.get('cachedir'))
+    tokenizer = AutoTokenizer.from_pretrained(model_config['name'], cache_dir=model_config.get('cachedir'))
     if tokenizer.pad_token is None:
         tokenizer.pad_token = tokenizer.eos_token
         tokenizer.pad_token_id = tokenizer.eos_token_id
@@ -67,9 +87,9 @@ if __name__ == "__main__":
     train_dataloader = prepare_train_loaders(dataset_config)['full']
     val_dataloader = prepare_test_loaders(dataset_config)['val']
 
-    print(f"Loading base model for Sequence Classification: {model_config['base_type']}")
+    print(f"Loading base model for Sequence Classification: {model_config['name']}")
     model = AutoModelForSequenceClassification.from_pretrained(
-        model_config['base_type'],
+        model_config['name'],
         return_dict=True,
         num_labels=model_config['num_labels'],
         cache_dir=model_config.get('cachedir'),
@@ -78,7 +98,7 @@ if __name__ == "__main__":
     model.resize_token_embeddings(len(tokenizer))
     model.config.pad_token_id = tokenizer.pad_token_id
 
-    peft_config = LoraConfig(task_type="SEQ_CLS", **model_config['ft_config'])
+    peft_config = LoraConfig(**model_config['peft_config'])
     model = get_peft_model(model, peft_config).to(DEVICE)
     model.print_trainable_parameters()
 
@@ -112,7 +132,7 @@ if __name__ == "__main__":
             if val_accuracy > best_val_accuracy:
                 print("New best model found! Saving adapter...")
                 best_val_accuracy = val_accuracy
-                checkpoint_dir = os.path.join(args.model_save_dir, f"{TASK_NAME}_lora")
+                checkpoint_dir = os.path.join(MODEL_SAVE_DIR, f"{TASK_NAME}_lora")
                 model.save_pretrained(checkpoint_dir)
 
     print("\nTraining finished.")

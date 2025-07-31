@@ -1,6 +1,7 @@
+import os
 import torch
+from torch.utils.data import Dataset, DataLoader, Subset
 from datasets import load_dataset
-from torch.utils.data import Dataset, DataLoader
 
 class HFEuroSATDataset(Dataset):
     def __init__(self, hf_split, transforms=None):
@@ -14,12 +15,15 @@ class HFEuroSATDataset(Dataset):
         item = self.hf_split[idx]
         image = item['image'].convert("RGB")
         label = item['label']
+
         if self.transforms:
             image = self.transforms(image)
+
         return image, label
 
 def prepare_train_loaders(config):
-    hf_train_split = load_dataset("tanganke/eurosat", split="train", cache_dir=config.get('hf_cache_dir'))
+    cache_dir = config.get('hf_cache_dir') or config.get('cache_dir') or None
+    hf_train_split = load_dataset("tanganke/eurosat", split="train", cache_dir=cache_dir)
     
     train_dataset = HFEuroSATDataset(
         hf_split=hf_train_split,
@@ -37,23 +41,36 @@ def prepare_train_loaders(config):
     return loaders
 
 def prepare_test_loaders(config):
-    hf_full_test_split = load_dataset("tanganke/eurosat", split="test", cache_dir=config.get('hf_cache_dir'))
-    split_dict = hf_full_test_split.train_test_split(test_size=0.8, seed=42)
-    hf_val_split = split_dict['train']
-    hf_test_split = split_dict['test']
-    
-    val_dataset = HFEuroSATDataset(hf_split=hf_val_split, transforms=config['eval_preprocess'])
-    test_dataset = HFEuroSATDataset(hf_split=hf_test_split, transforms=config['eval_preprocess'])
+    cache_dir = config.get('hf_cache_dir') or config.get('cache_dir') or None
+    hf_full_test_split = load_dataset("tanganke/eurosat", split="test", cache_dir=cache_dir)
 
-    loaders = {
-        'val': DataLoader(val_dataset, batch_size=config['batch_size'], shuffle=False, num_workers=config['num_workers']),
-        'test': DataLoader(test_dataset, batch_size=config['batch_size'], shuffle=False, num_workers=config['num_workers']),
-    }
-    
-    final_classnames = load_dataset("tanganke/eurosat", split="train").features['label'].names
-    
-    print("Final classnames loaded directly from dataset:", final_classnames)
-    
-    loaders['class_names'] = final_classnames
+    loaders = {}
+    if config.get('val_fraction', 0) > 0.:
+        print('Splitting EuroSAT for validation')
+        test_dataset_wrapped = HFEuroSATDataset(hf_full_test_split, transforms=config['eval_preprocess'])
+        
+        shuffled_idxs_path = config['shuffled_idxs']
+        if not os.path.exists(shuffled_idxs_path):
+            print(f"Shuffled index file not found at {shuffled_idxs_path}. Creating it now...")
+            os.makedirs(os.path.dirname(shuffled_idxs_path), exist_ok=True)
+            indices = torch.randperm(len(test_dataset_wrapped))
+            torch.save(indices, shuffled_idxs_path)
+            print("Saved new shuffled indices.")
+            
+        shuffled_idxs = torch.load(shuffled_idxs_path)
+        shuffled_idxs = shuffled_idxs.tolist()
+        num_valid = int(len(test_dataset_wrapped) * config['val_fraction'])
+        valid_idxs, test_idxs = shuffled_idxs[:num_valid], shuffled_idxs[num_valid:]
+        
+        val_subset = Subset(test_dataset_wrapped, valid_idxs)
+        test_subset = Subset(test_dataset_wrapped, test_idxs)
+        
+        loaders['val'] = DataLoader(val_subset, batch_size=config['batch_size'], shuffle=False, num_workers=config['num_workers'])
+        loaders['test'] = DataLoader(test_subset, batch_size=config['batch_size'], shuffle=False, num_workers=config['num_workers'])
+    else:
+        test_dataset_wrapped = HFEuroSATDataset(hf_full_test_split, transforms=config['eval_preprocess'])
+        loaders['test'] = DataLoader(test_dataset_wrapped, batch_size=config['batch_size'], shuffle=False, num_workers=config['num_workers'])
+
+    loaders['class_names'] = hf_full_test_split.features['label'].names
     
     return loaders
